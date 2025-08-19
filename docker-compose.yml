@@ -1,0 +1,28 @@
+services:
+  qwen-bridge:
+    build: .
+    container_name: ccr-qwen-bridge
+    ports:
+      # Host port mapping - external access
+      - "${HOST_PORT:-31337}:31337"
+    volumes:
+      # Bind mount for credential persistence
+      # Maps host ~/.qwen to container /home/node/.qwen
+      - ${HOME}/.qwen:/home/node/.qwen
+    environment:
+      # Environment variables for configuration
+      - HOST=0.0.0.0
+      - PORT=31337
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30000}
+      # Allow overriding credentials path if needed
+      - CREDENTIALS_FILE_PATH=/home/node/.qwen/oauth_creds.json
+    restart: unless-stopped
+    # Health check matching server health endpoint
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -41,7 +41,7 @@ npm start
 # Create configuration file
 cat > .env << EOF
 HOST=localhost
-PORT=8000
+PORT=31337
 LOG_LEVEL=debug
 LOG_FORMAT=console
 EOF
@@ -67,7 +67,7 @@ npm install --only=production
 # Create production configuration
 sudo tee /opt/ccr-qwen-bridge/.env << EOF
 HOST=0.0.0.0
-PORT=8000
+PORT=31337
 LOG_LEVEL=info
 LOG_FORMAT=json
 REQUEST_TIMEOUT=30000
@@ -99,9 +99,164 @@ sudo systemctl start qwen-bridge
 sudo systemctl status qwen-bridge
 ```
 
-### 2. Docker Deployment (Phase 3)
+### 2. Docker Deployment
 
-*Docker support is planned for Phase 3. For now, use direct deployment.*
+Docker provides an easy way to deploy the CCR Qwen Bridge with persistent credential access across different environments.
+
+#### Prerequisites
+
+1. **Docker Engine** - Install Docker on your system
+2. **Docker Compose** - Included with Docker Desktop or install separately
+3. **Authenticated Qwen CLI** - Must have valid `~/.qwen/oauth_creds.json`
+
+#### Quick Start with Docker Compose
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd ccr-qwen-bridge
+
+# Ensure you have valid credentials from qwen auth
+ls -la ~/.qwen/oauth_creds.json
+# Should show a JSON file with recent timestamp
+
+# Start the service with Docker Compose
+docker-compose up -d
+
+# Check service status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+```
+
+#### Configuration
+
+The Docker deployment uses environment variables for configuration. You can override defaults by creating a `.env` file:
+
+```bash
+# Create environment file
+cat > .env << EOF
+HOST_PORT=31337
+LOG_LEVEL=info
+LOG_FORMAT=json
+REQUEST_TIMEOUT=30000
+EOF
+```
+
+Available environment variables:
+- `HOST_PORT` - Host port to map to container (default: 31337)
+- `LOG_LEVEL` - Logging level (default: info)
+- `LOG_FORMAT` - Log format (console or json, default: json)
+- `REQUEST_TIMEOUT` - Request timeout in milliseconds (default: 30000)
+
+#### Volume Management
+
+The Docker Compose configuration uses a bind mount to access your host's Qwen credentials:
+
+```bash
+# Verify host credentials exist
+ls -la ~/.qwen/oauth_creds.json
+
+# Check container can access credentials
+docker-compose exec qwen-bridge ls -la /home/node/.qwen/oauth_creds.json
+
+# Backup credentials (standard file copy)
+cp ~/.qwen/oauth_creds.json ~/.qwen/oauth_creds.json.backup
+```
+
+#### Manual Docker Commands
+
+If you prefer to run Docker directly without Compose:
+
+```bash
+# Build the image
+docker build -t ccr-qwen-bridge .
+
+# Run with credential bind mounting
+docker run -d \
+  --name qwen-bridge \
+  -p 31337:31337 \
+  -v $HOME/.qwen:/home/node/.qwen \
+  -e HOST=0.0.0.0 \
+  -e PORT=31337 \
+  -e LOG_LEVEL=info \
+  --restart unless-stopped \
+  ccr-qwen-bridge
+
+# View logs
+docker logs -f qwen-bridge
+```
+
+#### Credential Setup for Docker
+
+Before starting the Docker container, ensure you have valid Qwen credentials:
+
+```bash
+# Install official qwen-code CLI
+npm install -g qwen-code
+
+# Authenticate to generate credentials
+qwen auth
+
+# Verify credentials exist
+ls -la ~/.qwen/oauth_creds.json
+
+# Secure credentials file (recommended)
+chmod 600 ~/.qwen/oauth_creds.json
+```
+
+The Docker Compose configuration automatically maps your host `~/.qwen` directory to the container, so existing credentials will be available to the containerized application.
+
+#### Health Monitoring
+
+```bash
+# Check container health status
+docker inspect --format='{{json .State.Health}}' ccr-qwen-bridge
+
+# Basic health check
+curl http://localhost:31337/health
+
+# Detailed status with JSON logs
+curl http://localhost:31337/health | jq '.'
+```
+
+#### Updating the Docker Deployment
+
+```bash
+# Pull latest changes
+git pull origin main
+
+# Rebuild and restart
+docker-compose down
+docker-compose up -d --build
+
+# Or update running container
+docker-compose pull
+docker-compose up -d
+```
+
+#### Troubleshooting Docker Issues
+
+```bash
+# Check if container is running
+docker-compose ps
+
+# View container logs
+docker-compose logs --tail=100
+
+# Check credential file access
+docker-compose exec qwen-bridge ls -la /home/node/.qwen/
+
+# Test credential file content
+docker-compose exec qwen-bridge cat /home/node/.qwen/oauth_creds.json
+
+# Check environment variables
+docker-compose exec qwen-bridge env | grep -E "(HOST|PORT|LOG)"
+
+# Restart container
+docker-compose restart
+```
 
 ### 3. Reverse Proxy Setup
 
@@ -112,7 +267,7 @@ server {
     server_name your-domain.com;
     
     location / {
-        proxy_pass http://localhost:8000;
+        proxy_pass http://localhost:31337;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -137,8 +292,8 @@ server {
     
     ProxyPreserveHost On
     ProxyRequests Off
-    ProxyPass / http://localhost:8000/
-    ProxyPassReverse / http://localhost:8000/
+    ProxyPass / http://localhost:31337/
+    ProxyPassReverse / http://localhost:31337/
     
     # Increase timeouts
     ProxyTimeout 60
@@ -152,7 +307,7 @@ server {
 #### Development (.env.development)
 ```bash
 HOST=localhost
-PORT=8000
+PORT=31337
 LOG_LEVEL=debug
 LOG_FORMAT=console
 REQUEST_TIMEOUT=30000
@@ -161,7 +316,7 @@ REQUEST_TIMEOUT=30000
 #### Production (.env.production)
 ```bash
 HOST=0.0.0.0
-PORT=8000
+PORT=31337
 LOG_LEVEL=info
 LOG_FORMAT=json
 REQUEST_TIMEOUT=45000
@@ -194,7 +349,7 @@ chmod 600 .env
 ### Firewall Rules
 ```bash
 # Allow only necessary ports
-sudo ufw allow 8000/tcp  # Bridge server
+sudo ufw allow 31337/tcp  # Bridge server
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP (if using reverse proxy)
 sudo ufw allow 443/tcp   # HTTPS (if using reverse proxy)
@@ -211,10 +366,10 @@ sudo ufw enable
 ### Health Monitoring
 ```bash
 # Basic health check
-curl http://localhost:8000/health
+curl http://localhost:31337/health
 
 # Detailed status with JSON logs
-curl http://localhost:8000/health | jq '.'
+curl http://localhost:31337/health | jq '.'
 ```
 
 ### Log Management
@@ -244,10 +399,10 @@ journalctl -u qwen-bridge | grep "FATAL"
 htop -p $(pgrep -f "qwen-bridge")
 
 # Check open connections
-netstat -an | grep :8000
+netstat -an | grep :31337
 
 # Monitor response times
-curl -w "@curl-format.txt" http://localhost:8000/health
+curl -w "@curl-format.txt" http://localhost:31337/health
 ```
 
 ## Troubleshooting
@@ -278,7 +433,7 @@ sudo systemctl restart qwen-bridge
 #### 3. Server won't start
 ```bash
 # Check port availability
-sudo netstat -tlnp | grep :8000
+sudo netstat -tlnp | grep :31337
 
 # Check configuration
 node -c src/server.js
@@ -305,7 +460,7 @@ echo "LOG_LEVEL=debug" >> .env
 DEBUG=* npm start
 
 # Analyze request/response flow
-curl -v http://localhost:8000/v1/chat/completions \
+curl -v http://localhost:31337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"qwen-coder-plus","messages":[{"role":"user","content":"test"}]}'
 ```

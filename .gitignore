@@ -199,7 +199,6 @@ local/
 *.sqlite3
 
 # Container-related
-.dockerignore
 docker-compose.override.yml
 
 # Terraform (if infrastructure as code is added)
