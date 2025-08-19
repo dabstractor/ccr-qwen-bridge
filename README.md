@@ -1,17 +1,25 @@
-# Qwen Code Bridge for Claude Code Router
+# Claude Bridge for Claude Code Router
 
-Use Qwen's free daily API quota with your Claude Code Router.
+Use free daily API quotas from multiple AI providers with your Claude Code Router.
 
 ## Setup
 
 ### 1. Prerequisites
 
 - **Node.js 18+** installed
-- **Authenticate with Qwen CLI first:**
-  ```bash
-  npm install -g @qwen-code/qwen-code@latest
-  qwen auth
-  ```
+- **Authenticate with provider CLIs first:**
+
+**For Qwen:**
+```bash
+npm install -g @qwen-code/qwen-code@latest
+qwen auth
+```
+
+**For Gemini (if enabled):**
+```bash
+# Gemini CLI authentication process (example)
+gcloud auth application-default login
+```
 
 ### 2. Install and Start
 
@@ -24,7 +32,7 @@ npm install
 npm start
 ```
 
-The server will start on `localhost:31337` by default.
+The server will start on `localhost:8732` by default.
 
 #### Option B: Docker Deployment (Start Once, Run Forever)
 
@@ -58,7 +66,7 @@ Add this to your `~/.claude-code-router/config.json`:
   "api_base_url": "http://localhost:31337/v1/chat/completions",
   "models": [
     {
-      "name": "qwen3-coder-plus",
+      "name": "qwen/qwen3-coder-plus",
       "transformer": {
         "use": [
           [
@@ -71,13 +79,26 @@ Add this to your `~/.claude-code-router/config.json`:
       }
     },
     {
-      "name": "qwen3-coder-flash",
+      "name": "qwen/qwen3-coder-flash",
       "transformer": {
         "use": [
           [
             "maxtoken",
             {
               "max_tokens": 262144
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "name": "gemini/gemini-pro",
+      "transformer": {
+        "use": [
+          [
+            "maxtoken",
+            {
+              "max_tokens": 32768
             }
           ]
         ]
@@ -90,14 +111,14 @@ Add this to your `~/.claude-code-router/config.json`:
 **Under "Router":**
 ```json
 "Router": {
-  "default": "qwen-bridge,qwen3-coder-plus",
-  "background": "qwen-bridge,qwen3-coder-flash",
-  "think": "qwen-bridge,qwen3-coder-plus",
-  "longContext": "qwen-bridge,qwen3-coder-plus"
+  "default": "claude-bridge,qwen/qwen3-coder-plus",
+  "background": "claude-bridge,qwen/qwen3-coder-flash",
+  "think": "claude-bridge,qwen/qwen3-coder-plus",
+  "longContext": "claude-bridge,gemini/gemini-pro"
 }
 ```
 
-That's it! Your Claude Code Router will now use Qwen's free API quota.
+That's it! Your Claude Code Router will now use multiple providers' free API quotas.
 
 ## Configuration
 
@@ -113,34 +134,66 @@ Edit the `.env` file:
 # Server Configuration
 HOST=localhost
 PORT=31337
+
+# Authentication
+CREDENTIALS_FILE_PATH=~/.qwen/oauth_creds.json
+
+# Logging
 LOG_LEVEL=info
 LOG_FORMAT=console
-
-# API Configuration
 REQUEST_TIMEOUT=30000
-# QWEN_API_BASE_URL is auto-detected from OAuth response, leave empty for auto-detection
+
+# Provider Configuration
+
+# Qwen Provider (enabled by default)
+PROVIDER_QWEN_ENABLED=true
+PROVIDER_QWEN_CREDENTIALS_PATH=~/.qwen/oauth_creds.json
+PROVIDER_QWEN_DEFAULT_MODEL=qwen3-coder-plus
+# PROVIDER_QWEN_API_BASE_URL is auto-detected from OAuth response, leave empty for auto-detection
+PROVIDER_QWEN_REQUEST_TIMEOUT=30000
+
+# Gemini Provider (disabled by default)
+PROVIDER_GEMINI_ENABLED=false
+PROVIDER_GEMINI_CREDENTIALS_PATH=~/.gemini/oauth_creds.json
+PROVIDER_GEMINI_DEFAULT_MODEL=gemini-pro
+PROVIDER_GEMINI_CLIENT_ID=your-gemini-client-id-here
+PROVIDER_GEMINI_API_BASE_URL=https://generativelanguage.googleapis.com/v1
+PROVIDER_GEMINI_REQUEST_TIMEOUT=30000
 
 # Development/Production
 NODE_ENV=development
 ```
 
+### Enable Additional Providers
+
+To enable Gemini support:
+1. Set `PROVIDER_GEMINI_ENABLED=true`
+2. Configure `PROVIDER_GEMINI_CLIENT_ID` with your Gemini API client ID
+3. Authenticate with the Gemini CLI
+4. Restart the server
+
 ### Common Issues
 
 **"Credentials file not found"**
-- Run `qwen auth` first
+- Run the appropriate auth command for each provider first
 
 **"Invalid refresh token"**
-- Re-run `qwen auth`
+- Re-run the auth command for the affected provider
+
+**"No enabled provider found"**
+- Check that at least one provider is enabled in your configuration
 
 ### Health Check
 
 ```bash
 # Standard installation
-curl http://localhost:31337/health
+curl http://localhost:8732/health
 
 # Docker deployment
 curl http://localhost:31337/health
 ```
+
+The health check will show the status of all configured providers.
 
 ### Docker Management
 

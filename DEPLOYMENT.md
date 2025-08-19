@@ -462,7 +462,7 @@ DEBUG=* npm start
 # Analyze request/response flow
 curl -v http://localhost:31337/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen-coder-plus","messages":[{"role":"user","content":"test"}]}'
+  -d '{"model":"qwen3-coder-plus","messages":[{"role":"user","content":"test"}]}'
 ```
 
 ## Backup & Recovery

@@ -95,7 +95,7 @@ class TestQwenCodeBridge {
           id: 'mock-test-id-' + Date.now(),
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
-          model: qwenRequest.model || 'qwen-coder-plus',
+          model: qwenRequest.model || 'qwen3-coder-plus',
           choices: [
             {
               index: 0,
@@ -128,7 +128,7 @@ class TestQwenCodeBridge {
           id: 'mock-test-id-' + Date.now(),
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
-          model: qwenRequest.model || 'qwen-coder-plus',
+          model: qwenRequest.model || 'qwen3-coder-plus',
           choices: [
             {
               index: 0,

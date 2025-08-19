@@ -343,7 +343,7 @@ describe('RequestTranslator - Tool Calling', () => {
     
     const qwenResponse = {
       id: 'test-id',
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           index: 0,
@@ -384,7 +384,7 @@ describe('RequestTranslator - Tool Calling', () => {
     
     const qwenResponse = {
       id: 'test-id',
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           message: {

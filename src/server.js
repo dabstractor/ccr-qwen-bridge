@@ -1,11 +1,11 @@
 import express from 'express';
 import { OAuthTokenManager } from './oauth-token-manager.js';
-import { RequestTranslator } from './request-translator.js';
+import { QwenTranslator } from './translators/qwen-translator.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config-manager.js';
 import { ErrorHandler } from './error-handler.js';
 
-class QwenCodeBridge {
+class ClaudeBridge {
   constructor() {
     this.app = express();
     // Initialize with basic logger first, will be reconfigured after config load
@@ -29,15 +29,21 @@ class QwenCodeBridge {
       // Initialize error handler
       this.errorHandler = new ErrorHandler(this.logger);
       
+      // Get Qwen provider configuration
+      const qwenConfig = this.configManager.getProviderConfig('qwen');
+      if (!qwenConfig || !qwenConfig.enabled) {
+        throw new Error('Qwen provider is not enabled or configured');
+      }
+
       // Initialize other components with configuration
       this.tokenManager = new OAuthTokenManager(
-        this.configManager.getCredentialsPath(),
+        this.configManager.expandHomePath(qwenConfig.credentialsPath),
         this.logger
       );
-      this.translator = new RequestTranslator(
+      this.translator = new QwenTranslator(
         this.logger,
-        this.configManager.getQwenApiBaseUrl(),
-        this.configManager.getRequestTimeout()
+        qwenConfig.apiBaseUrl,
+        qwenConfig.requestTimeout
       );
       
       // Connect translator to token manager for API URL resolution
@@ -47,12 +53,12 @@ class QwenCodeBridge {
       this.setupMiddleware();
       this.setupRoutes();
       
-      this.logger.info('Qwen Code Bridge initialized successfully', {
+      this.logger.info('Claude Bridge initialized successfully', {
         config: this.configManager.dumpConfig()
       });
       
     } catch (error) {
-      this.logger.error('Failed to initialize Qwen Code Bridge', {
+      this.logger.error('Failed to initialize Claude Bridge', {
         error: error.message,
         stack: error.stack
       });
@@ -119,8 +125,8 @@ class QwenCodeBridge {
     }
 
     // F-1.3: Forward request to Qwen-Code API with format translation
-    const qwenRequest = this.translator.translateOpenAIToQwen(req.body);
-    const qwenResponse = await this.translator.forwardToQwenAPI(qwenRequest, validToken);
+    const qwenRequest = this.translator.translateOpenAIToProvider(req.body);
+    const qwenResponse = await this.translator.forwardToProviderAPI(qwenRequest, validToken);
     
     // Handle streaming vs non-streaming responses
     if (req.body.stream) {
@@ -175,7 +181,7 @@ class QwenCodeBridge {
       });
     } else {
       // F-1.4: Transform response back to OpenAI-compatible format
-      const openAIResponse = this.translator.translateQwenToOpenAI(qwenResponse);
+      const openAIResponse = this.translator.translateProviderToOpenAI(qwenResponse);
       
       this.logger.info('Successfully proxied chat completion request', {
         model: qwenRequest.model,
@@ -200,7 +206,7 @@ class QwenCodeBridge {
       const port = this.configManager.getPort();
       
       this.app.listen(port, host, () => {
-        this.logger.info('Qwen Code Bridge server started', {
+        this.logger.info('Claude Bridge server started', {
           host,
           port,
           version: '1.0.0',
@@ -219,8 +225,8 @@ class QwenCodeBridge {
 }
 
 // Start the server
-const bridge = new QwenCodeBridge();
+const bridge = new ClaudeBridge();
 bridge.start().catch(error => {
-  console.error('Fatal error starting Qwen Code Bridge:', error);
+  console.error('Fatal error starting Claude Bridge:', error);
   process.exit(1);
 });

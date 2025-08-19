@@ -1,24 +1,33 @@
-import { ToolCallValidator } from './tool-call-validator.js';
+import { ToolCallValidator } from '../tool-call-validator.js';
+import { BaseTranslator } from './base-translator.js';
 
-export class RequestTranslator {
+/**
+ * QwenTranslator - Qwen-specific request translator
+ * Translates between OpenAI-compatible format and Qwen-Code API format
+ */
+export class QwenTranslator extends BaseTranslator {
   constructor(logger, apiBaseUrl = null, requestTimeout = 30000) {
-    this.logger = logger;
-    this.apiBaseUrl = apiBaseUrl;
-    this.requestTimeout = requestTimeout;
+    super(logger, apiBaseUrl, requestTimeout);
     this.toolCallValidator = new ToolCallValidator(logger);
   }
-
+  
   setTokenManager(tokenManager) {
     this.tokenManager = tokenManager;
   }
-
-  translateOpenAIToQwen(openAIRequest) {
-    // F-1.3: Translate OpenAI-compatible requests to Qwen-Code API format
+  
+  translateOpenAIToProvider(openAIRequest) {
+    // Translate OpenAI-compatible requests to Qwen-Code API format
     // Qwen-Code API is OpenAI-compatible, so minimal translation is needed
     // We'll pass through most fields but ensure compatibility
     
+    // Strip provider prefix from model name (e.g., "qwen/qwen-coder-plus" -> "qwen-coder-plus")
+    let modelName = openAIRequest.model || 'qwen3-coder-plus';
+    if (modelName.includes('/')) {
+      modelName = modelName.split('/')[1];
+    }
+    
     const qwenRequest = {
-      model: openAIRequest.model || 'qwen3-coder-plus',
+      model: modelName,
       messages: this.transformMessagesForQwen(openAIRequest.messages || [], openAIRequest.tools),
       temperature: openAIRequest.temperature,
       max_tokens: openAIRequest.max_tokens,
@@ -35,14 +44,14 @@ export class RequestTranslator {
       function_call: openAIRequest.function_call,
       functions: openAIRequest.functions
     };
-
+    
     // Remove undefined fields to keep request clean
     Object.keys(qwenRequest).forEach(key => {
       if (qwenRequest[key] === undefined) {
         delete qwenRequest[key];
       }
     });
-
+    
     this.logger.info('Translated OpenAI request to Qwen format', {
       model: qwenRequest.model,
       messageCount: qwenRequest.messages.length,
@@ -51,12 +60,12 @@ export class RequestTranslator {
       toolCount: qwenRequest.tools ? qwenRequest.tools.length : 0,
       hasToolChoice: !!qwenRequest.tool_choice
     });
-
+    
     return qwenRequest;
   }
-
-  translateQwenToOpenAI(qwenResponse) {
-    // F-1.4: Transform Qwen-Code responses to OpenAI-compatible format
+  
+  translateProviderToOpenAI(qwenResponse) {
+    // Transform Qwen-Code responses to OpenAI-compatible format
     // Enhanced with robust tool call preservation and error handling
     
     const openAIResponse = {
@@ -71,21 +80,21 @@ export class RequestTranslator {
         total_tokens: 0
       }
     };
-
+    
     // Enhanced choice processing with comprehensive tool call preservation
     openAIResponse.choices = openAIResponse.choices.map((choice, index) => {
       const processedChoice = {
         index: choice.index !== undefined ? choice.index : index,
         finish_reason: choice.finish_reason || 'stop'
       };
-
+      
       // Process message with tool call preservation
       const message = choice.message || choice.delta || {};
       processedChoice.message = {
         role: message.role || 'assistant',
         content: message.content || null
       };
-
+      
       // ✅ CRITICAL: Preserve tool_calls structure completely
       if (message.tool_calls && Array.isArray(message.tool_calls)) {
         const validatedToolCalls = [];
@@ -99,14 +108,14 @@ export class RequestTranslator {
               });
               continue;
             }
-
+            
             if (!toolCall.function || !toolCall.function.name) {
               this.logger.warn('Tool call missing function information in response', {
                 toolCallId: toolCall.id
               });
               continue;
             }
-
+            
             // Validate arguments are valid JSON if present
             let validatedArguments = toolCall.function.arguments || '{}';
             if (validatedArguments) {
@@ -125,7 +134,7 @@ export class RequestTranslator {
                 validatedArguments = '{}';
               }
             }
-
+            
             // Build validated tool call
             const validatedToolCall = {
               id: toolCall.id,
@@ -135,7 +144,7 @@ export class RequestTranslator {
                 arguments: validatedArguments
               }
             };
-
+            
             validatedToolCalls.push(validatedToolCall);
             
             this.logger.debug('Preserved tool call in response', {
@@ -143,7 +152,7 @@ export class RequestTranslator {
               functionName: toolCall.function.name,
               hasArguments: !!validatedArguments && validatedArguments !== '{}'
             });
-
+            
           } catch (error) {
             this.logger.error('Error processing tool call in response', {
               toolCallId: toolCall.id,
@@ -151,7 +160,7 @@ export class RequestTranslator {
             });
           }
         }
-
+        
         // Only add tool_calls if we have valid ones
         if (validatedToolCalls.length > 0) {
           processedChoice.message.tool_calls = validatedToolCalls;
@@ -166,15 +175,15 @@ export class RequestTranslator {
           });
         }
       }
-
+      
       return processedChoice;
     });
-
+    
     // Final validation and logging
     const totalToolCalls = openAIResponse.choices.reduce((count, choice) => {
       return count + (choice.message.tool_calls ? choice.message.tool_calls.length : 0);
     }, 0);
-
+    
     this.logger.info('Translated Qwen response to OpenAI format', {
       id: openAIResponse.id,
       model: openAIResponse.model,
@@ -182,11 +191,11 @@ export class RequestTranslator {
       totalToolCalls,
       hasUsage: !!openAIResponse.usage
     });
-
+    
     return openAIResponse;
   }
-
-  async forwardToQwenAPI(qwenRequest, accessToken) {
+  
+  async forwardToProviderAPI(qwenRequest, accessToken) {
     try {
       // Get the correct API base URL from token manager
       let apiBaseUrl;
@@ -197,17 +206,17 @@ export class RequestTranslator {
       }
       
       const apiUrl = `${apiBaseUrl}/chat/completions`;
-
+      
       this.logger.info('Forwarding request to Qwen API', {
         url: apiUrl,
         model: qwenRequest.model,
         messageCount: qwenRequest.messages.length
       });
-
+      
       // Create AbortController for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.requestTimeout);
-
+      
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -219,9 +228,9 @@ export class RequestTranslator {
         body: JSON.stringify(qwenRequest),
         signal: controller.signal
       });
-
+      
       clearTimeout(timeoutId);
-
+      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         
@@ -230,12 +239,12 @@ export class RequestTranslator {
           statusText: response.statusText,
           error: errorData
         });
-
+        
         const error = new Error(errorData.error?.message || `API request failed: ${response.status} ${response.statusText}`);
         error.statusCode = response.status;
         throw error;
       }
-
+      
       // Handle streaming vs non-streaming responses
       if (qwenRequest.stream) {
         // For streaming responses, return the response directly
@@ -249,30 +258,30 @@ export class RequestTranslator {
           model: responseData.model,
           usage: responseData.usage
         });
-
+        
         return responseData;
       }
-
+      
     } catch (error) {
       this.logger.error('Error forwarding request to Qwen API', {
         error: error.message,
         statusCode: error.statusCode
       });
-
+      
       // Handle specific error cases
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
         const networkError = new Error('Network error: Unable to connect to Qwen API. Please check your internet connection.');
         networkError.statusCode = 503;
         throw networkError;
       }
-
+      
       // Handle timeout errors
       if (error.name === 'AbortError' || error.message.includes('timeout')) {
         const timeoutError = new Error('Request timeout: Qwen API did not respond in time.');
         timeoutError.statusCode = 504;
         throw timeoutError;
       }
-
+      
       // Re-throw with status code preserved
       if (!error.statusCode) {
         error.statusCode = 500;
@@ -280,14 +289,14 @@ export class RequestTranslator {
       throw error;
     }
   }
-
+  
   generateId() {
     // Generate OpenAI-style completion ID
     const timestamp = Date.now().toString(36);
     const random = Math.random().toString(36).substr(2, 5);
     return `chatcmpl-${timestamp}${random}`;
   }
-
+  
   // Process streaming chunks to translate tool calls in SSE format
   processStreamingChunk(chunk) {
     try {
@@ -324,7 +333,7 @@ export class RequestTranslator {
       return chunk;
     }
   }
-
+  
   // Translate streaming response chunks from Qwen to OpenAI format
   translateStreamingQwenToOpenAI(qwenChunk) {
     // Handle streaming chunk translation similar to non-streaming
@@ -335,21 +344,21 @@ export class RequestTranslator {
       model: qwenChunk.model || 'qwen3-coder-plus',
       choices: qwenChunk.choices || []
     };
-
+    
     // Process each choice in the streaming chunk
     openAIChunk.choices = openAIChunk.choices.map((choice, index) => {
       const processedChoice = {
         index: choice.index !== undefined ? choice.index : index,
         finish_reason: choice.finish_reason || null
       };
-
+      
       // Process delta message with tool call preservation
       const delta = choice.delta || {};
       processedChoice.delta = {
         role: delta.role || undefined,
         content: delta.content || undefined
       };
-
+      
       // ✅ CRITICAL: Preserve tool_calls in streaming chunks
       if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
         const validatedToolCalls = [];
@@ -362,7 +371,7 @@ export class RequestTranslator {
               id: toolCall.id || undefined,
               type: toolCall.type || 'function'
             };
-
+            
             if (toolCall.function) {
               validatedToolCall.function = {
                 name: toolCall.function.name || undefined,
@@ -375,7 +384,7 @@ export class RequestTranslator {
                 validatedToolCall.function.arguments = toolCall.function.arguments;
               }
             }
-
+            
             validatedToolCalls.push(validatedToolCall);
             
           } catch (error) {
@@ -385,25 +394,19 @@ export class RequestTranslator {
             });
           }
         }
-
+        
         // Only add tool_calls if we have valid ones
         if (validatedToolCalls.length > 0) {
           processedChoice.delta.tool_calls = validatedToolCalls;
         }
       }
-
+      
       return processedChoice;
     });
-
+    
     return openAIChunk;
   }
-
-  // Utility method for streaming support (Phase 2/3)
-  async forwardStreamToQwenAPI(qwenRequest, accessToken) {
-    // This will be implemented in a future phase when streaming is needed
-    throw new Error('Streaming not yet implemented');
-  }
-
+  
   // Transform messages to be compatible with Qwen API
   transformMessagesForQwen(messages, tools = null) {
     // Validate tool call sequence before transformation
@@ -511,17 +514,17 @@ export class RequestTranslator {
     
     return transformedMessages;
   }
-
+  
   // Validation helpers
   validateOpenAIRequest(request) {
     if (!request.messages || !Array.isArray(request.messages)) {
       throw new Error('Invalid request: messages must be an array');
     }
-
+    
     if (request.messages.length === 0) {
       throw new Error('Invalid request: messages array cannot be empty');
     }
-
+    
     for (const message of request.messages) {
       if (!message.role) {
         throw new Error('Invalid request: each message must have a role');
@@ -547,7 +550,7 @@ export class RequestTranslator {
         throw new Error(`Invalid request: unsupported message role: ${message.role}`);
       }
     }
-
+    
     return true;
   }
 }

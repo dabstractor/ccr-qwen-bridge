@@ -281,7 +281,7 @@ Task 7: CREATE validation/ccr-integration-test.js
 // CRITICAL PATTERN: Tool Definition Preservation (Task 2)
 // Current WORKING code in request-translator.js lines 29-33:
 const qwenRequest = {
-  model: openAIRequest.model || 'qwen-coder-plus',
+  model: openAIRequest.model || 'qwen3-coder-plus',
   messages: this.transformMessagesForQwen(openAIRequest.messages || []), // ❌ THIS BREAKS IT
   // ... other params ...
   // ✅ THESE LINES ARE CORRECT - keep them:
@@ -350,7 +350,7 @@ translateQwenToOpenAI(qwenResponse) {
     id: qwenResponse.id || this.generateId(),
     object: qwenResponse.object || 'chat.completion',
     created: qwenResponse.created || Math.floor(Date.now() / 1000),
-    model: qwenResponse.model || 'qwen-coder-plus',
+    model: qwenResponse.model || 'qwen3-coder-plus',
     choices: qwenResponse.choices || [],
     usage: qwenResponse.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
   };
@@ -442,7 +442,7 @@ curl -X POST http://localhost:8732/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d '{
-    "model": "qwen-coder-plus",
+    "model": "qwen3-coder-plus",
     "messages": [
       {"role": "user", "content": "What is the weather?"}
     ],

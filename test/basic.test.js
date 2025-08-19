@@ -62,7 +62,7 @@ describe('RequestTranslator', () => {
     
     const qwenResponse = {
       id: 'test-id',
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           index: 0,
@@ -77,7 +77,7 @@ describe('RequestTranslator', () => {
     
     assert.strictEqual(openAIResponse.id, 'test-id');
     assert.strictEqual(openAIResponse.object, 'chat.completion');
-    assert.strictEqual(openAIResponse.model, 'qwen-coder-plus');
+    assert.strictEqual(openAIResponse.model, 'qwen3-coder-plus');
     assert.strictEqual(openAIResponse.choices.length, 1);
     assert.strictEqual(openAIResponse.choices[0].message.content, 'Hello back!');
   });

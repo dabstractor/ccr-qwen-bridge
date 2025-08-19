@@ -169,7 +169,7 @@ export class ErrorHandler {
         details: 'Please check your request format and ensure all required fields are present.',
         examples: {
           valid_request: {
-            model: 'qwen-coder-plus',
+            model: 'qwen3-coder-plus',
             messages: [
               { role: 'user', content: 'Hello, how are you?' }
             ]

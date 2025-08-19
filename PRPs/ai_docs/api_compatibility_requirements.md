@@ -108,7 +108,7 @@ const client = new OpenAI({
 
 // Tool calling request (same as OpenAI format)
 const completion = await client.chat.completions.create({
-  model: 'qwen-coder-plus',
+  model: 'qwen3-coder-plus',
   messages: [
     { role: 'user', content: 'What is the weather in NYC?' },
     { 

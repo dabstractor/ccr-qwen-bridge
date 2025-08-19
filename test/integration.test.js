@@ -84,7 +84,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       id: 'qwen-test-id',
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           index: 0,
@@ -117,7 +117,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
     translator.forwardToQwenAPI = mock.fn(() => Promise.resolve(mockQwenResponse));
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [
         {
           role: 'user',
@@ -160,7 +160,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
     assert(responseData.id, 'Response should have ID');
     assert.strictEqual(responseData.object, 'chat.completion');
     assert(responseData.created, 'Response should have created timestamp');
-    assert.strictEqual(responseData.model, 'qwen-coder-plus');
+    assert.strictEqual(responseData.model, 'qwen3-coder-plus');
     assert(Array.isArray(responseData.choices), 'Response should have choices array');
     assert.strictEqual(responseData.choices.length, 1);
     
@@ -190,7 +190,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       id: 'qwen-complete-id',
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           index: 0,
@@ -212,7 +212,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       .mock.mockImplementation(() => Promise.resolve(mockQwenResponse));
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [
         {
           role: 'user',
@@ -281,7 +281,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       id: 'qwen-parallel-id',
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       choices: [
         {
           index: 0,
@@ -321,7 +321,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       .mock.mockImplementation(() => Promise.resolve(mockQwenResponse));
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [
         {
           role: 'user',
@@ -388,7 +388,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
 
   test('should handle streaming tool calling response', async () => {
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [
         {
           role: 'user',
@@ -432,7 +432,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       });
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [
         {
           role: 'tool',
@@ -461,7 +461,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
   test('should handle invalid request format', async () => {
     const requestBody = {
       // Missing required messages field
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       tools: []
     };
 
@@ -486,7 +486,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
     mockTokenManager.getValidAccessToken = mock.fn(() => Promise.resolve(null));
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [{ role: 'user', content: 'Test message' }]
     };
 
@@ -546,7 +546,7 @@ describe('Integration Tests - Tool Calling Workflow', () => {
       });
 
     const requestBody = {
-      model: 'qwen-coder-plus',
+      model: 'qwen3-coder-plus',
       messages: [{ role: 'user', content: 'Use a tool' }],
       tools: [
         {
