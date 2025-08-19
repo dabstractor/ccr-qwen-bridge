@@ -1,0 +1,29 @@
+{
+  "name": "ccr-qwen-bridge",
+  "version": "1.0.0",
+  "description": "A lightweight OAuth proxy server that enables OpenAI-compatible clients to use Qwen-Code's free daily API quota",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "qwen",
+    "oauth",
+    "proxy",
+    "openai",
+    "api",
+    "bridge"
+  ],
+  "author": "CCR Qwen Bridge Project",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
