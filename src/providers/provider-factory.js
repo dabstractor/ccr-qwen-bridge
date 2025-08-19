@@ -8,11 +8,11 @@ export class ProviderFactory {
   static createProvider(providerName, config, logger) {
     switch (providerName.toLowerCase()) {
       case 'qwen':
-        return new QwenProvider(config, logger);
+        return new QwenProvider(config, logger, config.requestTimeout);
       case 'gemini':
         return new GeminiProvider(config, logger);
       default:
-        throw new Error(`Unsupported provider: ${providerName}`);
+        throw new Error();
     }
   }
   
@@ -24,3 +24,4 @@ export class ProviderFactory {
     return this.getSupportedProviders().includes(providerName.toLowerCase());
   }
 }
+

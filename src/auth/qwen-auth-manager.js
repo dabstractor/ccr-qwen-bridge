@@ -8,7 +8,7 @@ import { BaseAuthManager } from './base-auth-manager.js';
  * Handles authentication for Qwen-Code API using OAuth 2.0 Device Authorization Flow
  */
 export class QwenAuthManager extends BaseAuthManager {
-  constructor(credentialsPath, logger) {
+  constructor(credentialsPath, clientId, logger) {
     // Expand home path before calling super
     const expandedPath = credentialsPath.startsWith('~') 
       ? path.join(os.homedir(), credentialsPath.slice(1))
@@ -18,7 +18,8 @@ export class QwenAuthManager extends BaseAuthManager {
     
     // Qwen OAuth 2.0 constants
     this.TOKEN_URL = 'https://chat.qwen.ai/api/v1/oauth2/token';
-    this.CLIENT_ID = 'f0304373b74a44d2b584a3fb70ca9e56';
+    // Use provided clientId or fall back to hardcoded value for backward compatibility
+    this.CLIENT_ID = clientId || 'f0304373b74a44d2b584a3fb70ca9e56';
   }
   
   async initialize() {
@@ -93,7 +94,10 @@ export class QwenAuthManager extends BaseAuthManager {
   
   async refreshToken() {
     try {
-      this.logger.info('Attempting to refresh Qwen access token');
+      this.logger.info('Attempting to refresh Qwen access token', {
+        clientId: this.CLIENT_ID,
+        tokenUrl: this.TOKEN_URL
+      });
       
       // Refresh Logic - POST request to token endpoint
       const response = await fetch(this.TOKEN_URL, {
@@ -114,11 +118,12 @@ export class QwenAuthManager extends BaseAuthManager {
         const errorData = await response.json().catch(() => ({ error: 'unknown_error' }));
         
         // Handle unrecoverable auth errors
-        if (errorData.error === 'invalid_grant' || errorData.error === 'access_denied') {
-          this.logger.error('Unrecoverable Qwen authentication error', {
+        if (errorData.error === 'invalid_grant' || errorData.error === 'access_denied' || errorData.error === 'invalid_client') {
+          this.logger.error('Qwen authentication credentials invalid', {
             error: errorData.error,
             description: errorData.error_description
           });
+          
           throw new Error(`FATAL: ${errorData.error}. Please re-authenticate with the official qwen-code CLI by running: qwen auth`);
         }
         
@@ -223,4 +228,5 @@ export class QwenAuthManager extends BaseAuthManager {
     
     return normalized;
   }
+
 }

@@ -7,19 +7,20 @@ import { QwenTranslator } from '../translators/qwen-translator.js';
  * Combines Qwen authentication and translation components
  */
 export class QwenProvider extends BaseProvider {
-  constructor(config, logger) {
+  constructor(config, logger, requestTimeout) {
     super(config, logger);
     
     // Initialize Qwen-specific components
     this.authManager = new QwenAuthManager(
       config.credentialsPath || '~/.qwen/oauth_creds.json',
+      config.clientId, // Pass clientId from config (falls back to hardcoded if not provided)
       logger
     );
     
     this.translator = new QwenTranslator(
       logger,
       config.apiBaseUrl,
-      config.requestTimeout
+      requestTimeout
     );
     
     // Connect translator to auth manager for API URL resolution
@@ -65,3 +66,4 @@ export class QwenProvider extends BaseProvider {
     return 'qwen';
   }
 }
+

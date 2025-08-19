@@ -1,9 +1,8 @@
 import express from 'express';
-import { OAuthTokenManager } from './oauth-token-manager.js';
-import { QwenTranslator } from './translators/qwen-translator.js';
 import { Logger } from './logger.js';
 import { ConfigManager } from './config-manager.js';
 import { ErrorHandler } from './error-handler.js';
+import { ProviderFactory } from './providers/provider-factory.js';
 
 class ClaudeBridge {
   constructor() {
@@ -11,8 +10,7 @@ class ClaudeBridge {
     // Initialize with basic logger first, will be reconfigured after config load
     this.logger = new Logger();
     this.configManager = new ConfigManager(this.logger);
-    this.tokenManager = null;
-    this.translator = null;
+    this.providers = new Map(); // Map of initialized providers
   }
 
   async initialize() {
@@ -29,32 +27,21 @@ class ClaudeBridge {
       // Initialize error handler
       this.errorHandler = new ErrorHandler(this.logger);
       
-      // Get Qwen provider configuration
-      const qwenConfig = this.configManager.getProviderConfig('qwen');
-      if (!qwenConfig || !qwenConfig.enabled) {
-        throw new Error('Qwen provider is not enabled or configured');
-      }
-
-      // Initialize other components with configuration
-      this.tokenManager = new OAuthTokenManager(
-        this.configManager.expandHomePath(qwenConfig.credentialsPath),
-        this.logger
-      );
-      this.translator = new QwenTranslator(
-        this.logger,
-        qwenConfig.apiBaseUrl,
-        qwenConfig.requestTimeout
-      );
+      // Initialize all enabled providers
+      await this.initializeProviders();
       
-      // Connect translator to token manager for API URL resolution
-      this.translator.setTokenManager(this.tokenManager);
+      this.logger.info('Initialized providers', {
+        providerList: Array.from(this.providers.keys()),
+        providerConfigs: this.configManager.getAllProviderConfigs()
+      });
       
       // Setup Express middleware and routes
       this.setupMiddleware();
       this.setupRoutes();
       
       this.logger.info('Claude Bridge initialized successfully', {
-        config: this.configManager.dumpConfig()
+        config: this.configManager.dumpConfig(),
+        providers: Array.from(this.providers.keys())
       });
       
     } catch (error) {
@@ -66,15 +53,49 @@ class ClaudeBridge {
     }
   }
 
+  async initializeProviders() {
+    const providerConfigs = this.configManager.getAllProviderConfigs();
+    const enabledProviders = this.configManager.getEnabledProviders();
+    
+    this.logger.info('Initializing providers', {
+      enabledProviders,
+      totalProviders: Object.keys(providerConfigs).length
+    });
+    
+    // Initialize each enabled provider
+    for (const providerName of enabledProviders) {
+      try {
+        const config = providerConfigs[providerName];
+        const provider = ProviderFactory.createProvider(providerName, config, this.logger);
+        await provider.initialize();
+        this.providers.set(providerName, provider);
+        
+        this.logger.info(`${providerName} provider initialized successfully`);
+      } catch (error) {
+        this.logger.error(`Failed to initialize ${providerName} provider`, {
+          error: error.message
+        });
+        
+        // Check if we should continue with other providers or fail completely
+        // For now, we'll skip failed providers but log the error
+        this.logger.warn(`Skipping ${providerName} provider due to initialization failure`);
+        continue;
+      }
+    }
+    
+    if (this.providers.size === 0) {
+      throw new Error('No providers are enabled or configured');
+    }
+  }
+
   setupMiddleware() {
     this.app.use(express.json({ limit: '10mb' }));
     
-    // Request logging middleware
+    // Basic request logging
     this.app.use((req, res, next) => {
-      this.logger.info(`${req.method} ${req.path}`, {
-        userAgent: req.get('User-Agent'),
-        contentType: req.get('Content-Type')
-      });
+      if (req.path !== '/health') {
+        this.logger.debug(`${req.method} ${req.path}`);
+      }
       next();
     });
   }
@@ -90,7 +111,8 @@ class ClaudeBridge {
       res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        version: '1.0.0'
+        version: '1.0.0',
+        providers: Array.from(this.providers.keys())
       });
     });
 
@@ -112,21 +134,55 @@ class ClaudeBridge {
     this.app.use(this.errorHandler.errorMiddleware());
   }
 
+  getProviderFromModel(modelName) {
+    // Extract provider from model name (e.g., "gemini/gemini-pro" → "gemini")
+    if (!modelName || typeof modelName !== 'string') {
+      return null;
+    }
+    
+    // Split on '/' and take the first part as provider name
+    const parts = modelName.split('/');
+    
+    if (parts.length < 2) {
+      // If no prefix, default to qwen for backward compatibility
+      return this.providers.has('qwen') ? 'qwen' : null;
+    }
+    
+    const providerName = parts[0].toLowerCase();
+    return this.providers.has(providerName) ? providerName : null;
+  }
+
   async handleChatCompletions(req, res) {
     // Validate request format
-    this.translator.validateOpenAIRequest(req.body);
+    if (!req.body || !req.body.model) {
+      throw new Error('Invalid request: model is required');
+    }
     
-    // F-2.4: Check token expiration before each request
-    const validToken = await this.tokenManager.getValidAccessToken();
+    // Determine provider based on model name prefix
+    const providerName = this.getProviderFromModel(req.body.model);
     
+    if (!providerName) {
+      throw new Error(`No provider available for model: ${req.body.model}`);
+    }
+    
+    const provider = this.providers.get(providerName);
+    if (!provider) {
+      throw new Error(`Provider not initialized: ${providerName}`);
+    }
+    
+    // Validate request format using provider's translator
+    provider.translator.validateOpenAIRequest(req.body);
+    
+    // Get valid access token from the provider
+    const validToken = await provider.getValidAccessToken();
     if (!validToken) {
-      const error = new Error('FATAL: Unable to obtain valid access token');
+      const error = new Error(`FATAL: Unable to obtain valid access token for ${providerName}`);
       throw error;
     }
 
-    // F-1.3: Forward request to Qwen-Code API with format translation
-    const qwenRequest = this.translator.translateOpenAIToProvider(req.body);
-    const qwenResponse = await this.translator.forwardToProviderAPI(qwenRequest, validToken);
+    // Translate request to provider format
+    const providerRequest = provider.translateRequest(req.body);
+    const providerResponse = await provider.forwardRequest(providerRequest, validToken);
     
     // Handle streaming vs non-streaming responses
     if (req.body.stream) {
@@ -135,57 +191,91 @@ class ClaudeBridge {
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       
-      // Use the correct way to pipe fetch response to Express response
-      const reader = qwenResponse.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk;
-          
-          // Process complete lines from buffer
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-          
-          for (const line of lines) {
-            if (line.trim()) {
-              // Process each SSE chunk and translate tool calls if needed
-              const processedLine = this.translator.processStreamingChunk(line);
-              res.write(processedLine + '\n');
-            } else {
-              res.write(line + '\n');
+      if (providerName === 'qwen') {
+        // Qwen uses fetch response streaming
+        const reader = providerResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
+            
+            // Process complete lines from buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (line.trim()) {
+                // Process each SSE chunk and translate tool calls if needed
+                const processedLine = provider.translator.processStreamingChunk(line);
+                res.write(processedLine + '\n');
+              } else {
+                res.write(line + '\n');
+              }
             }
           }
+          
+          // Process any remaining buffer content
+          if (buffer.trim()) {
+            const processedLine = provider.translator.processStreamingChunk(buffer);
+            res.write(processedLine);
+          }
+          
+          res.end();
+        } catch (error) {
+          this.logger.error('Error streaming response', { 
+            provider: providerName,
+            error: error.message 
+          });
+          res.end();
         }
+      } else if (providerName === 'gemini') {
+        // Gemini uses direct response streaming
+        const reader = providerResponse.body.getReader();
+        const decoder = new TextDecoder();
         
-        // Process any remaining buffer content
-        if (buffer.trim()) {
-          const processedLine = this.translator.processStreamingChunk(buffer);
-          res.write(processedLine);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            // Process each SSE chunk and translate to OpenAI format
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (line.trim()) {
+                const processedLine = provider.translator.processStreamingChunk(line);
+                res.write(processedLine + '\n');
+              } else {
+                res.write(line + '\n');
+              }
+            }
+          }
+          
+          res.end();
+        } catch (error) {
+          this.logger.error('Error streaming response', { 
+            provider: providerName,
+            error: error.message 
+          });
+          res.end();
         }
-        
-        res.end();
-      } catch (error) {
-        this.logger.error('Error streaming response', { error: error.message });
-        res.end();
       }
       
-      this.logger.info('Started streaming chat completion response', {
-        model: qwenRequest.model,
-        messageCount: qwenRequest.messages.length
-      });
+      // Started streaming response
     } else {
-      // F-1.4: Transform response back to OpenAI-compatible format
-      const openAIResponse = this.translator.translateProviderToOpenAI(qwenResponse);
+      // Transform response back to OpenAI-compatible format
+      const openAIResponse = provider.translateResponse(providerResponse);
       
       this.logger.info('Successfully proxied chat completion request', {
-        model: qwenRequest.model,
-        messageCount: qwenRequest.messages.length,
+        provider: providerName,
+        model: providerRequest.model,
+        messageCount: req.body.messages.length,
         completionId: openAIResponse.id
       });
       
@@ -198,9 +288,6 @@ class ClaudeBridge {
       // Initialize all components
       await this.initialize();
       
-      // F-2.2: Load credentials on startup
-      await this.tokenManager.initialize();
-      
       // Start the HTTP server
       const host = this.configManager.getHost();
       const port = this.configManager.getPort();
@@ -210,7 +297,8 @@ class ClaudeBridge {
           host,
           port,
           version: '1.0.0',
-          environment: process.env.NODE_ENV || 'development'
+          environment: process.env.NODE_ENV || 'development',
+          providers: Array.from(this.providers.keys())
         });
       });
       

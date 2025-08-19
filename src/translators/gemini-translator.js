@@ -7,7 +7,7 @@ import { BaseTranslator } from './base-translator.js';
  */
 export class GeminiTranslator extends BaseTranslator {
   constructor(logger, apiBaseUrl = null, requestTimeout = 30000) {
-    super(logger, apiBaseUrl || 'https://generativelanguage.googleapis.com/v1', requestTimeout);
+    super(logger, apiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta', requestTimeout);
     this.toolCallValidator = new ToolCallValidator(logger);
   }
   
@@ -29,10 +29,14 @@ export class GeminiTranslator extends BaseTranslator {
         topP: openAIRequest.top_p,
         topK: openAIRequest.top_k, // Gemini-specific parameter
         stopSequences: openAIRequest.stop
-      },
-      // Handle streaming
-      stream: openAIRequest.stream || false
+      }
     };
+    
+    // IMPORTANT: Never include stream field in Gemini request - it's not supported
+    // Stream is handled by using different endpoint, not by request field
+    
+    // Handle streaming by using different endpoint, not by adding stream field
+    const stream = openAIRequest.stream || false;
     
     // Handle tools/functions if present
     if (openAIRequest.tools || openAIRequest.functions) {
@@ -43,17 +47,18 @@ export class GeminiTranslator extends BaseTranslator {
     this.cleanUndefinedFields(geminiRequest);
     this.cleanUndefinedFields(geminiRequest.generationConfig);
     
-    this.logger.info('Translated OpenAI request to Gemini format', {
+    this.logger.debug('Translated OpenAI request to Gemini format', {
       model: modelName,
       messageCount: geminiRequest.contents ? geminiRequest.contents.length : 0,
-      stream: geminiRequest.stream,
+      stream: stream,
       hasTools: !!geminiRequest.tools,
       toolCount: geminiRequest.tools ? geminiRequest.tools.length : 0
     });
     
     return {
       model: modelName,
-      request: geminiRequest
+      request: geminiRequest,
+      stream: stream
     };
   }
   
@@ -104,7 +109,7 @@ export class GeminiTranslator extends BaseTranslator {
       };
     }
     
-    this.logger.info('Translated Gemini response to OpenAI format', {
+    this.logger.debug('Translated Gemini response to OpenAI format', {
       id: openAIResponse.id,
       model: openAIResponse.model,
       choiceCount: openAIResponse.choices.length,
@@ -116,14 +121,25 @@ export class GeminiTranslator extends BaseTranslator {
   
   async forwardToProviderAPI(providerRequest, accessToken) {
     try {
-      const { model, request } = providerRequest;
-      const apiUrl = `${this.apiBaseUrl}/models/${model}:generateContent?key=${accessToken}`;
+      const { model, request, stream } = providerRequest;
+      // Use streaming endpoint if streaming is enabled
+      const endpoint = stream ? 'streamGenerateContent' : 'generateContent';
       
-      this.logger.info('Forwarding request to Gemini API', {
-        url: apiUrl,
-        model: model,
-        messageCount: request.contents ? request.contents.length : 0
-      });
+      // For public Gemini API, use API key instead of OAuth token
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('GEMINI_API_KEY environment variable is required for Gemini API access');
+      }
+      
+      const apiUrl = `${this.apiBaseUrl}/models/${model}:${endpoint}?key=${apiKey}`;
+      
+      // CRITICAL: Remove any 'stream' field that might have leaked into the request
+      if ('stream' in request) {
+        this.logger.warn('Removing stream field from Gemini request - not supported by API');
+        delete request.stream;
+      }
+      
+      // Request prepared for Gemini API
       
       // Create AbortController for timeout
       const controller = new AbortController();
@@ -133,7 +149,7 @@ export class GeminiTranslator extends BaseTranslator {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'gemini-code/1.0.0'
+          'User-Agent': 'GeminiCLI/1.0.0 (linux; x64) node.js'
         },
         body: JSON.stringify(request),
         signal: controller.signal
@@ -156,13 +172,13 @@ export class GeminiTranslator extends BaseTranslator {
       }
       
       // Handle streaming vs non-streaming responses
-      if (request.stream) {
+      if (stream) {
         // For streaming responses, return the response directly
         return response;
       } else {
         const responseData = await response.json();
         
-        this.logger.info('Received successful response from Gemini API', {
+        this.logger.debug('Received successful response from Gemini API', {
           id: responseData.id,
           model: model,
           usage: responseData.usageMetadata
@@ -305,34 +321,43 @@ export class GeminiTranslator extends BaseTranslator {
       
       // Handle different message types
       if (message.role === 'tool') {
-        // Tool response messages
+        // Tool response messages - Gemini expects functionResponse format
         geminiContent.parts.push({
-          text: message.content || ''
+          functionResponse: {
+            name: message.tool_call_id || 'unknown_tool',
+            response: {
+              content: message.content || ''
+            }
+          }
         });
       } else if (message.role === 'assistant' && message.tool_calls) {
         // Assistant messages with tool calls
-        // Convert tool calls to Gemini function calls
-        const functionCalls = message.tool_calls.map(toolCall => ({
-          functionCall: {
-            name: toolCall.function.name,
-            args: toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {}
-          }
-        }));
-        
-        geminiContent.parts.push(...functionCalls);
-        
-        // Add content if present
+        // Add content first if present
         if (message.content) {
-          geminiContent.parts.unshift({
+          geminiContent.parts.push({
             text: message.content
+          });
+        }
+        
+        // Convert tool calls to Gemini function calls
+        for (const toolCall of message.tool_calls) {
+          geminiContent.parts.push({
+            functionCall: {
+              name: toolCall.function.name,
+              args: toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {}
+            }
           });
         }
       } else {
         // Regular text messages (system, user, assistant)
         if (message.content) {
-          geminiContent.parts.push({
-            text: message.content
-          });
+          // Handle both string content and array content (from Claude Code Router)
+          const textContent = this.extractTextFromContent(message.content);
+          if (textContent) {
+            geminiContent.parts.push({
+              text: textContent
+            });
+          }
         }
       }
       
@@ -350,31 +375,195 @@ export class GeminiTranslator extends BaseTranslator {
       return undefined;
     }
     
-    return tools.map(tool => {
+    this.logger.debug('Transforming tools for Gemini', {
+      toolCount: tools.length,
+      toolNames: tools.map(t => t.function?.name || t.name).join(', ')
+    });
+    
+    return tools.map((tool, index) => {
+      this.logger.debug(`Processing tool ${index}`, {
+        toolName: tool.function?.name || tool.name,
+        hasParameters: !!(tool.function?.parameters),
+        originalRequired: tool.function?.parameters?.required || []
+      });
+      
       if (tool.type === 'function') {
+        const cleanedParams = this.cleanParametersForGemini(tool.function.parameters);
+        
+        this.logger.debug(`Cleaned parameters for tool ${tool.function.name}`, {
+          originalRequired: tool.function.parameters?.required || [],
+          cleanedRequired: cleanedParams?.required || [],
+          availableProperties: Object.keys(cleanedParams?.properties || {})
+        });
+        
         return {
           functionDeclarations: [
             {
               name: tool.function.name,
               description: tool.function.description,
-              parameters: tool.function.parameters
+              parameters: cleanedParams
             }
           ]
         };
       } else if (tool.function) {
         // Handle direct function format
+        const cleanedParams = this.cleanParametersForGemini(tool.function.parameters);
+        
+        this.logger.debug(`Cleaned parameters for direct function ${tool.function.name}`, {
+          originalRequired: tool.function.parameters?.required || [],
+          cleanedRequired: cleanedParams?.required || [],
+          availableProperties: Object.keys(cleanedParams?.properties || {})
+        });
+        
         return {
           functionDeclarations: [
             {
               name: tool.function.name,
               description: tool.function.description,
-              parameters: tool.function.parameters
+              parameters: cleanedParams
             }
           ]
         };
       }
       return tool;
     });
+  }
+  
+  // Clean JSON Schema parameters to be compatible with Gemini API
+  cleanParametersForGemini(parameters) {
+    if (!parameters || typeof parameters !== 'object') {
+      return parameters;
+    }
+    
+    // Create a deep copy to avoid modifying the original
+    const cleaned = JSON.parse(JSON.stringify(parameters));
+    
+    // Log before cleaning for debugging
+    this.logger.debug('Schema before cleaning', {
+      properties: Object.keys(cleaned.properties || {}),
+      required: cleaned.required || []
+    });
+    
+    // Remove unsupported JSON Schema fields that Gemini doesn't recognize
+    this.removeUnsupportedSchemaFields(cleaned);
+    
+    // Log after cleaning for debugging
+    this.logger.debug('Schema after cleaning', {
+      properties: Object.keys(cleaned.properties || {}),
+      required: cleaned.required || []
+    });
+    
+    return cleaned;
+  }
+  
+  // Extract text content from either string or Claude Code Router content arrays
+  extractTextFromContent(content) {
+    // If content is already a string, return it
+    if (typeof content === 'string') {
+      return content;
+    }
+    
+    // If content is an array (from Claude Code Router), extract text from all text blocks
+    if (Array.isArray(content)) {
+      let combinedText = '';
+      for (const block of content) {
+        if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
+          combinedText += block.text;
+        }
+      }
+      return combinedText;
+    }
+    
+    // If content is an object with a text property, extract it
+    if (content && typeof content === 'object' && typeof content.text === 'string') {
+      return content.text;
+    }
+    
+    // Fallback: try to convert to string
+    return String(content || '');
+  }
+  
+  // Recursively remove unsupported JSON Schema fields
+  removeUnsupportedSchemaFields(obj) {
+    if (!obj || typeof obj !== 'object') {
+      return;
+    }
+    
+    // List of JSON Schema fields that Gemini API doesn't support
+    // CRITICAL: Do NOT include 'pattern' here - it's a valid property name, not a JSON Schema field
+    const unsupportedFields = [
+      '$schema',
+      'additionalProperties',
+      'minItems',
+      'maxItems',
+      'minLength',
+      'maxLength',
+      'minimum',
+      'maximum',
+      'exclusiveMinimum',
+      'exclusiveMaximum',
+      'format',
+      'default',
+      'examples',
+      'const',
+      'oneOf',
+      'anyOf',
+      'allOf',
+      'not',
+      'if',
+      'then',
+      'else'
+    ];
+    
+    // Remove unsupported fields from current level
+    for (const field of unsupportedFields) {
+      if (field in obj) {
+        delete obj[field];
+      }
+    }
+    
+    // Handle required array validation for properties
+    if (obj.properties && obj.required && Array.isArray(obj.required)) {
+      this.logger.debug('Processing required array for tool schema', {
+        requiredBefore: obj.required,
+        availableProperties: Object.keys(obj.properties)
+      });
+      
+      // Filter required array to only include properties that actually exist
+      const originalRequired = [...obj.required];
+      obj.required = obj.required.filter(propName => {
+        const exists = obj.properties && obj.properties[propName];
+        if (!exists) {
+          this.logger.warn('Removing invalid required property from tool schema', {
+            property: propName,
+            reason: 'Property not defined in properties object',
+            availableProperties: Object.keys(obj.properties || {})
+          });
+        }
+        return exists;
+      });
+      
+      this.logger.debug('Filtered required array', {
+        originalRequired,
+        filteredRequired: obj.required,
+        removedCount: originalRequired.length - obj.required.length
+      });
+      
+      // Remove required array if it's empty
+      if (obj.required.length === 0) {
+        this.logger.debug('Removing empty required array from tool schema');
+        delete obj.required;
+      }
+    }
+    
+    // Recursively clean nested objects and arrays
+    for (const [key, value] of Object.entries(obj)) {
+      if (Array.isArray(value)) {
+        value.forEach(item => this.removeUnsupportedSchemaFields(item));
+      } else if (value && typeof value === 'object') {
+        this.removeUnsupportedSchemaFields(value);
+      }
+    }
   }
   
   // Transform Gemini content to OpenAI format
@@ -420,8 +609,9 @@ export class GeminiTranslator extends BaseTranslator {
   mapRoleToGemini(role) {
     switch (role) {
       case 'system':
+        return 'user'; // Gemini doesn't support system role, map to user
       case 'user':
-        return role;
+        return 'user';
       case 'assistant':
         return 'model';
       case 'tool':

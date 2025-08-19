@@ -13,6 +13,8 @@ export class GeminiProvider extends BaseProvider {
     // Initialize Gemini-specific components
     this.authManager = new GeminiAuthManager(
       config.credentialsPath || '~/.gemini/oauth_creds.json',
+      config.clientId,
+      config.clientSecret,
       logger
     );
     

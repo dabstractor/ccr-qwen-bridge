@@ -46,7 +46,7 @@ export class BaseProvider {
   /**
    * Forward request to the provider's API
    * @param {Object} translatedRequest - Provider-specific request
-   * @param {string} accessToken - Valid access token
+   * @param {string} [accessToken] - Valid access token (optional for some providers)
    * @returns {Promise<Object>} Provider response
    */
   async forwardRequest(translatedRequest, accessToken) {

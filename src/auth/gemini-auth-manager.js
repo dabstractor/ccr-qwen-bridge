@@ -8,7 +8,7 @@ import { BaseAuthManager } from './base-auth-manager.js';
  * Handles authentication for Google Gemini API using OAuth 2.0
  */
 export class GeminiAuthManager extends BaseAuthManager {
-  constructor(credentialsPath, logger) {
+  constructor(credentialsPath, clientId, clientSecret, logger) {
     // Expand home path before calling super
     const expandedPath = credentialsPath.startsWith('~') 
       ? path.join(os.homedir(), credentialsPath.slice(1))
@@ -16,12 +16,23 @@ export class GeminiAuthManager extends BaseAuthManager {
     
     super(expandedPath, logger);
     
-    // Gemini OAuth 2.0 constants (research needed for exact values)
+    // Gemini OAuth 2.0 constants from technical reference
     this.TOKEN_URL = 'https://oauth2.googleapis.com/token';
-    this.SCOPE = 'https://www.googleapis.com/auth/generative-language'; // Example scope
-    // Note: CLIENT_ID would typically come from configuration or environment variables
-    // For now, we'll use a placeholder
-    this.CLIENT_ID = process.env.GEMINI_CLIENT_ID || 'gemini-client-id-placeholder';
+    this.CLIENT_ID = clientId || process.env.PROVIDER_GEMINI_CLIENT_ID;
+    this.CLIENT_SECRET = clientSecret || process.env.PROVIDER_GEMINI_CLIENT_SECRET;
+    this.SCOPE = [
+      'https://www.googleapis.com/auth/cloud-platform',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ];
+    
+    // Validate that required environment variables are set
+    if (!this.CLIENT_ID) {
+      throw new Error('GEMINI_CLIENT_ID environment variable is required but not set');
+    }
+    if (!this.CLIENT_SECRET) {
+      throw new Error('GEMINI_CLIENT_SECRET environment variable is required but not set');
+    }
   }
   
   async initialize() {
@@ -109,8 +120,8 @@ export class GeminiAuthManager extends BaseAuthManager {
         body: JSON.stringify({
           grant_type: 'refresh_token',
           client_id: this.CLIENT_ID,
-          refresh_token: this.credentials.refresh_token,
-          scope: this.SCOPE
+          client_secret: this.CLIENT_SECRET,
+          refresh_token: this.credentials.refresh_token
         })
       });
       

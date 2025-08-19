@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { config } from 'dotenv';
+import { CredentialDiscovery } from './auth/credential-discovery.js';
 
 export class ConfigManager {
   constructor(logger) {
@@ -9,6 +10,7 @@ export class ConfigManager {
     this.config = {};
     this.providerConfigs = {};
     this.configLoaded = false;
+    this.credentialDiscovery = new CredentialDiscovery(logger);
   }
   
   async initialize() {
@@ -19,8 +21,11 @@ export class ConfigManager {
       // Build configuration with precedence: Environment variables > Config file > Defaults
       this.config = this.buildConfig();
       
-      // Build provider configurations
-      this.providerConfigs = this.buildProviderConfigs();
+      // Discover credentials from CLI tools
+      const discoveredCredentials = await this.credentialDiscovery.discoverAllCredentials();
+      
+      // Build provider configurations with discovered credentials
+      this.providerConfigs = await this.buildProviderConfigs(discoveredCredentials);
       
       this.configLoaded = true;
       this.logger.info('Configuration loaded successfully', {
@@ -61,6 +66,7 @@ export class ConfigManager {
       PORT: 31337,
       LOG_LEVEL: 'info',
       LOG_FORMAT: 'console', // 'console' or 'json'
+      // Default timeout for API requests in milliseconds
       REQUEST_TIMEOUT: 30000, // 30 seconds
       // Provider-specific defaults will be handled in provider configs
     };
@@ -82,48 +88,44 @@ export class ConfigManager {
     return finalConfig;
   }
   
-  buildProviderConfigs() {
+  async buildProviderConfigs(discoveredCredentials = {}) {
     const providerConfigs = {};
     
-    // Default provider configurations
-    const defaultProviderConfigs = {
-      qwen: {
-        name: 'qwen',
-        enabled: this.getConfigValue('PROVIDER_QWEN_ENABLED', 'true').toLowerCase() === 'true',
-        credentialsPath: this.getConfigValue('PROVIDER_QWEN_CREDENTIALS_PATH', '~/.qwen/oauth_creds.json'),
-        defaultModel: 'qwen3-coder-plus',
-        tokenUrl: 'https://chat.qwen.ai/api/v1/oauth2/token',
-        clientId: 'f0304373b74a44d2b584a3fb70ca9e56',
-        apiBaseUrl: this.getConfigValue('PROVIDER_QWEN_API_BASE_URL', null),
-        requestTimeout: parseInt(this.getConfigValue('PROVIDER_QWEN_REQUEST_TIMEOUT', '30000'))
-      },
-      gemini: {
-        name: 'gemini',
-        enabled: this.getConfigValue('PROVIDER_GEMINI_ENABLED', 'false').toLowerCase() === 'true',
-        credentialsPath: this.getConfigValue('PROVIDER_GEMINI_CREDENTIALS_PATH', '~/.gemini/oauth_creds.json'),
-        defaultModel: 'gemini-pro',
-        tokenUrl: 'https://oauth2.googleapis.com/token',
-        clientId: this.getConfigValue('PROVIDER_GEMINI_CLIENT_ID', 'gemini-client-id-placeholder'),
-        apiBaseUrl: this.getConfigValue('PROVIDER_GEMINI_API_BASE_URL', 'https://generativelanguage.googleapis.com/v1'),
-        requestTimeout: parseInt(this.getConfigValue('PROVIDER_GEMINI_REQUEST_TIMEOUT', '30000'))
-      }
+    // Build Qwen configuration with discovered credentials
+    const qwenCredentials = discoveredCredentials.qwen || {};
+    providerConfigs.qwen = {
+      name: 'qwen',
+      enabled: this.getConfigValue('PROVIDER_QWEN_ENABLED', 'true').toLowerCase() === 'true',
+      credentialsPath: qwenCredentials.credentialsPath || this.getConfigValue('PROVIDER_QWEN_CREDENTIALS_PATH', '~/.qwen/oauth_creds.json'),
+      defaultModel: this.getConfigValue('PROVIDER_QWEN_DEFAULT_MODEL', 'qwen3-coder-plus'),
+      tokenUrl: qwenCredentials.tokenUrl || this.getConfigValue('PROVIDER_QWEN_TOKEN_URL', 'https://chat.qwen.ai/api/v1/oauth2/token'),
+      clientId: qwenCredentials.clientId || this.getConfigValue('PROVIDER_QWEN_CLIENT_ID', 'f0304373b74a44d2b584a3fb70ca9e56'),
+      apiBaseUrl: this.getConfigValue('PROVIDER_QWEN_API_BASE_URL', null),
+      requestTimeout: parseInt(this.getConfigValue('PROVIDER_QWEN_REQUEST_TIMEOUT', '30000'))
     };
     
-    // Override with environment variables
-    for (const [providerName, defaultConfig] of Object.entries(defaultProviderConfigs)) {
-      const providerKey = providerName.toUpperCase();
-      
-      providerConfigs[providerName] = {
-        name: providerName,
-        enabled: this.getConfigValue(`PROVIDER_${providerKey}_ENABLED`, defaultConfig.enabled.toString()).toLowerCase() === 'true',
-        credentialsPath: this.getConfigValue(`PROVIDER_${providerKey}_CREDENTIALS_PATH`, defaultConfig.credentialsPath),
-        defaultModel: this.getConfigValue(`PROVIDER_${providerKey}_DEFAULT_MODEL`, defaultConfig.defaultModel),
-        tokenUrl: this.getConfigValue(`PROVIDER_${providerKey}_TOKEN_URL`, defaultConfig.tokenUrl),
-        clientId: this.getConfigValue(`PROVIDER_${providerKey}_CLIENT_ID`, defaultConfig.clientId),
-        apiBaseUrl: this.getConfigValue(`PROVIDER_${providerKey}_API_BASE_URL`, defaultConfig.apiBaseUrl),
-        requestTimeout: parseInt(this.getConfigValue(`PROVIDER_${providerKey}_REQUEST_TIMEOUT`, defaultConfig.requestTimeout.toString()))
-      };
-    }
+    // Build Gemini configuration with discovered credentials
+    const geminiCredentials = discoveredCredentials.gemini || {};
+    providerConfigs.gemini = {
+      name: 'gemini',
+      enabled: this.getConfigValue('PROVIDER_GEMINI_ENABLED', 'true').toLowerCase() === 'true',
+      credentialsPath: geminiCredentials.credentialsPath || this.getConfigValue('PROVIDER_GEMINI_CREDENTIALS_PATH', '~/.gemini/oauth_creds.json'),
+      defaultModel: this.getConfigValue('PROVIDER_GEMINI_DEFAULT_MODEL', 'gemini-pro'),
+      tokenUrl: geminiCredentials.tokenUrl || this.getConfigValue('PROVIDER_GEMINI_TOKEN_URL', 'https://oauth2.googleapis.com/token'),
+      clientId: geminiCredentials.clientId || this.getConfigValue('PROVIDER_GEMINI_CLIENT_ID', null),
+      clientSecret: geminiCredentials.clientSecret || this.getConfigValue('PROVIDER_GEMINI_CLIENT_SECRET', null),
+      scope: geminiCredentials.scope,
+      apiBaseUrl: this.getConfigValue('PROVIDER_GEMINI_API_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
+      requestTimeout: parseInt(this.getConfigValue('PROVIDER_GEMINI_REQUEST_TIMEOUT', '30000'))
+    };
+    
+    this.logger.info('Built provider configurations with discovered credentials', {
+      qwenEnabled: providerConfigs.qwen.enabled,
+      qwenClientId: providerConfigs.qwen.clientId ? 'found' : 'missing',
+      geminiEnabled: providerConfigs.gemini.enabled,
+      geminiClientId: providerConfigs.gemini.clientId ? 'found' : 'missing',
+      geminiClientSecret: providerConfigs.gemini.clientSecret ? 'found' : 'missing'
+    });
     
     return providerConfigs;
   }

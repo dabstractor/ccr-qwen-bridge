@@ -52,14 +52,7 @@ export class QwenTranslator extends BaseTranslator {
       }
     });
     
-    this.logger.info('Translated OpenAI request to Qwen format', {
-      model: qwenRequest.model,
-      messageCount: qwenRequest.messages.length,
-      stream: qwenRequest.stream,
-      hasTools: !!qwenRequest.tools,
-      toolCount: qwenRequest.tools ? qwenRequest.tools.length : 0,
-      hasToolChoice: !!qwenRequest.tool_choice
-    });
+    // Request translated successfully
     
     return qwenRequest;
   }
@@ -165,10 +158,7 @@ export class QwenTranslator extends BaseTranslator {
         if (validatedToolCalls.length > 0) {
           processedChoice.message.tool_calls = validatedToolCalls;
           
-          this.logger.info('Preserved tool calls in OpenAI response', {
-            originalCount: message.tool_calls.length,
-            validatedCount: validatedToolCalls.length
-          });
+          // Tool calls validated and preserved
         } else if (message.tool_calls.length > 0) {
           this.logger.warn('All tool calls in response were invalid, removing tool_calls field', {
             originalCount: message.tool_calls.length
@@ -184,13 +174,7 @@ export class QwenTranslator extends BaseTranslator {
       return count + (choice.message.tool_calls ? choice.message.tool_calls.length : 0);
     }, 0);
     
-    this.logger.info('Translated Qwen response to OpenAI format', {
-      id: openAIResponse.id,
-      model: openAIResponse.model,
-      choiceCount: openAIResponse.choices.length,
-      totalToolCalls,
-      hasUsage: !!openAIResponse.usage
-    });
+    // Response translated successfully
     
     return openAIResponse;
   }
@@ -207,11 +191,7 @@ export class QwenTranslator extends BaseTranslator {
       
       const apiUrl = `${apiBaseUrl}/chat/completions`;
       
-      this.logger.info('Forwarding request to Qwen API', {
-        url: apiUrl,
-        model: qwenRequest.model,
-        messageCount: qwenRequest.messages.length
-      });
+      // Forwarding request to Qwen API
       
       // Create AbortController for timeout
       const controller = new AbortController();
@@ -253,11 +233,7 @@ export class QwenTranslator extends BaseTranslator {
       } else {
         const responseData = await response.json();
         
-        this.logger.info('Received successful response from Qwen API', {
-          id: responseData.id,
-          model: responseData.model,
-          usage: responseData.usage
-        });
+        // Response received successfully
         
         return responseData;
       }
@@ -502,15 +478,7 @@ export class QwenTranslator extends BaseTranslator {
     const toolMessageCount = messages.filter(m => m.role === 'tool').length;
     const assistantWithToolsCount = messages.filter(m => m.role === 'assistant' && m.tool_calls).length;
     
-    if (toolMessageCount > 0 || assistantWithToolsCount > 0) {
-      this.logger.info('Preserved tool calling structure for Qwen API', {
-        totalMessages: messages.length,
-        toolMessages: toolMessageCount,
-        assistantMessagesWithTools: assistantWithToolsCount,
-        validationPassed: validationResult.valid,
-        hasToolDefinitions: tools && tools.length > 0
-      });
-    }
+    // Tool calling structure validated
     
     return transformedMessages;
   }

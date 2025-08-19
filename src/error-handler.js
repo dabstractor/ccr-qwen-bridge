@@ -110,14 +110,16 @@ export class ErrorHandler {
 
     // Timeout errors
     if (statusCode === 504 || error.message.includes('timeout')) {
+      const provider = error.provider || 'Unknown';
       this.logger.error('Request timeout', {
+        provider,
         error: error.message,
         statusCode
       });
 
       return res.status(504).json({
         error: {
-          message: 'Request timeout. The Qwen API did not respond in time.',
+          message: 'Request timeout. The upstream API did not respond in time.',
           type: 'timeout_error',
           details: 'The request took too long to complete. This may be due to high API load.',
           suggestion: 'Try reducing the complexity of your request or try again later.'
