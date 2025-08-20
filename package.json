@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
+    "setup": "node setup-credentials.js",
     "dev": "node --watch src/server.js",
     "test": "node --test test/*.test.js"
   },

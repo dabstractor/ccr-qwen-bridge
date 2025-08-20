@@ -93,10 +93,14 @@ export class ConfigManager {
     
     // Build Qwen configuration with discovered credentials
     const qwenCredentials = discoveredCredentials.qwen || {};
+    const qwenCredentialsPath = this.getConfigValue('CREDENTIALS_FILE_PATH') || 
+                                qwenCredentials.credentialsPath || 
+                                this.getConfigValue('PROVIDER_QWEN_CREDENTIALS_PATH', '/home/node/.qwen/oauth_creds.json');
+    
     providerConfigs.qwen = {
       name: 'qwen',
       enabled: this.getConfigValue('PROVIDER_QWEN_ENABLED', 'true').toLowerCase() === 'true',
-      credentialsPath: qwenCredentials.credentialsPath || this.getConfigValue('PROVIDER_QWEN_CREDENTIALS_PATH', '~/.qwen/oauth_creds.json'),
+      credentialsPath: qwenCredentialsPath,
       defaultModel: this.getConfigValue('PROVIDER_QWEN_DEFAULT_MODEL', 'qwen3-coder-plus'),
       tokenUrl: qwenCredentials.tokenUrl || this.getConfigValue('PROVIDER_QWEN_TOKEN_URL', 'https://chat.qwen.ai/api/v1/oauth2/token'),
       clientId: qwenCredentials.clientId || this.getConfigValue('PROVIDER_QWEN_CLIENT_ID', 'f0304373b74a44d2b584a3fb70ca9e56'),

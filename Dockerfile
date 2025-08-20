@@ -21,6 +21,10 @@ COPY --from=dependencies /app/node_modules ./node_modules
 # Copy source code
 COPY --chown=nodejs:nodejs . .
 
+# Fix permissions for mounted volumes
+RUN mkdir -p /home/nodejs/.qwen /home/nodejs/.gemini && \
+    chown -R nodejs:nodejs /home/nodejs/.qwen /home/nodejs/.gemini
+
 # Switch to non-root user
 USER nodejs
 

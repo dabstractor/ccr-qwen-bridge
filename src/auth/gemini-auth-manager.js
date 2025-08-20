@@ -26,13 +26,8 @@ export class GeminiAuthManager extends BaseAuthManager {
       'https://www.googleapis.com/auth/userinfo.profile'
     ];
     
-    // Validate that required environment variables are set
-    if (!this.CLIENT_ID) {
-      throw new Error('GEMINI_CLIENT_ID environment variable is required but not set');
-    }
-    if (!this.CLIENT_SECRET) {
-      throw new Error('GEMINI_CLIENT_SECRET environment variable is required but not set');
-    }
+    // Note: CLIENT_ID and CLIENT_SECRET are only required for OAuth flow, not for using cached credentials
+    // They will be validated when needed in the refreshToken method
   }
   
   async initialize() {

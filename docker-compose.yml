@@ -7,8 +7,13 @@ services:
       - "${HOST_PORT:-31337}:31337"
     volumes:
       # Bind mount for credential persistence
-      # Maps host ~/.qwen to container /home/node/.qwen
-      - ${HOME}/.qwen:/home/node/.qwen
+      # Maps host ~/.qwen to container /home/nodejs/.qwen
+      - ${HOME}/.qwen:/home/nodejs/.qwen
+      # Maps host ~/.gemini to container /home/nodejs/.gemini
+      - ${HOME}/.gemini:/home/nodejs/.gemini
+
+    # Run container as root to handle file permissions
+    user: "0:0"
     environment:
       # Environment variables for configuration
       - HOST=0.0.0.0
@@ -17,7 +22,15 @@ services:
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30000}
       # Allow overriding credentials path if needed
-      - CREDENTIALS_FILE_PATH=/home/node/.qwen/oauth_creds.json
+      - CREDENTIALS_FILE_PATH=/home/nodejs/.qwen/oauth_creds.json
+      # Pass through Gemini credentials if they exist in host environment
+      - PROVIDER_GEMINI_CLIENT_ID=${PROVIDER_GEMINI_CLIENT_ID:-}
+      - PROVIDER_GEMINI_CLIENT_SECRET=${PROVIDER_GEMINI_CLIENT_SECRET:-}
+      # Override default paths for root user
+      - PROVIDER_QWEN_CREDENTIALS_PATH=/home/nodejs/.qwen/oauth_creds.json
+      - PROVIDER_GEMINI_CREDENTIALS_PATH=/home/nodejs/.gemini/oauth_creds.json
+      # Override the CREDENTIALS_FILE_PATH to point to the correct location
+      - CREDENTIALS_FILE_PATH=/home/nodejs/.qwen/oauth_creds.json
     restart: unless-stopped
     # Health check matching server health endpoint
     healthcheck:

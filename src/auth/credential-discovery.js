@@ -17,13 +17,22 @@ export class CredentialDiscovery {
    */
   async discoverQwenCredentials() {
     try {
-      // For Qwen, the client_id appears to be hardcoded in the CLI
-      // We can extract it by examining the CLI binary or using known constants
+      // Use environment variable if set, otherwise default to home directory
+      const qwenCredentialsPath = process.env.PROVIDER_QWEN_CREDENTIALS_PATH || 
+                                 path.join(os.homedir(), '.qwen', 'oauth_creds.json');
+      
+      // Get Qwen client ID from environment variable
+      const clientId = process.env.PROVIDER_QWEN_CLIENT_ID;
+      
       const credentials = {
-        clientId: 'f0304373b74a44d2b584a3fb70ca9e56', // Known Qwen OAuth client ID
         tokenUrl: 'https://chat.qwen.ai/api/v1/oauth2/token',
-        credentialsPath: path.join(os.homedir(), '.qwen', 'oauth_creds.json')
+        credentialsPath: qwenCredentialsPath
       };
+      
+      // Only include clientId if it's available
+      if (clientId) {
+        credentials.clientId = clientId;
+      }
 
       // Verify the credentials file exists
       try {
@@ -45,13 +54,16 @@ export class CredentialDiscovery {
    */
   async discoverGeminiCredentials() {
     try {
-      const geminiConfigDir = path.join(os.homedir(), '.gemini');
+      // Use environment variable if set, otherwise default to home directory
+      const geminiCredentialsPath = process.env.PROVIDER_GEMINI_CREDENTIALS_PATH || 
+                                   path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+      const geminiConfigDir = path.dirname(geminiCredentialsPath);
       
-      // Check if Gemini CLI is installed
+      // Check if Gemini credentials file exists
       try {
-        await fs.access(geminiConfigDir);
+        await fs.access(geminiCredentialsPath);
       } catch (error) {
-        throw new Error('Gemini CLI not found. Please install the Gemini CLI first.');
+        throw new Error('Gemini credentials file not found. Please authenticate with the Gemini CLI first.');
       }
 
       // Try to extract client credentials from Gemini CLI configuration
@@ -60,7 +72,7 @@ export class CredentialDiscovery {
       return {
         ...credentials,
         tokenUrl: 'https://oauth2.googleapis.com/token',
-        credentialsPath: path.join(geminiConfigDir, 'oauth_creds.json'),
+        credentialsPath: geminiCredentialsPath,
         scope: [
           'https://www.googleapis.com/auth/cloud-platform',
           'https://www.googleapis.com/auth/userinfo.email',

@@ -10,16 +10,38 @@ import { BaseAuthManager } from './base-auth-manager.js';
 export class QwenAuthManager extends BaseAuthManager {
   constructor(credentialsPath, clientId, logger) {
     // Expand home path before calling super
-    const expandedPath = credentialsPath.startsWith('~') 
-      ? path.join(os.homedir(), credentialsPath.slice(1))
-      : credentialsPath;
+    // Handle both ~/ and /home/node/ paths correctly
+    let expandedPath = credentialsPath;
+    const homeDir = os.homedir();
+    
+    // Log the incoming credentials path for debugging
+    logger.debug('QwenAuthManager constructor', { 
+      inputCredentialsPath: credentialsPath,
+      homeDir: homeDir
+    });
+    
+    if (credentialsPath.startsWith('~')) {
+      expandedPath = path.join(homeDir, credentialsPath.slice(1));
+    } else if (credentialsPath.startsWith('/home/node/') || credentialsPath.startsWith('/home/nodejs/')) {
+      // For Docker, use the path as-is since we're mounting volumes to these locations
+      // The file should exist at the exact path specified
+      expandedPath = credentialsPath;
+    }
+    
+    logger.debug('QwenAuthManager resolved path', { 
+      expandedPath: expandedPath,
+      finalPath: path.resolve(expandedPath)
+    });
     
     super(expandedPath, logger);
     
     // Qwen OAuth 2.0 constants
     this.TOKEN_URL = 'https://chat.qwen.ai/api/v1/oauth2/token';
-    // Use provided clientId or fall back to hardcoded value for backward compatibility
-    this.CLIENT_ID = clientId || 'f0304373b74a44d2b584a3fb70ca9e56';
+    // Client ID is required
+    if (!clientId) {
+      throw new Error('QWEN_CLIENT_ID is required but not provided. Please run the setup script or set PROVIDER_QWEN_CLIENT_ID environment variable.');
+    }
+    this.CLIENT_ID = clientId;
   }
   
   async initialize() {

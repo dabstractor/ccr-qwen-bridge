@@ -213,17 +213,16 @@ export class GeminiTranslator extends BaseTranslator {
         // Streaming is handled via alt=sse parameter, not different endpoints
         const endpoint = 'generateContent';
         
-        // For public Gemini API, use API key instead of OAuth token
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          throw new Error('GEMINI_API_KEY environment variable is required for Gemini API access');
+        // Use OAuth token for authentication as per specification
+        if (!accessToken) {
+          throw new Error('Valid OAuth access token is required for Gemini API access');
         }
         
-        // Construct URL with appropriate parameters
-        let apiUrl = `${this.apiBaseUrl}/models/${model}:${endpoint}?key=${apiKey}`;
+        // Construct URL without API key parameter
+        let apiUrl = `${this.apiBaseUrl}/models/${model}:${endpoint}`;
         if (stream) {
           // Use alt=sse parameter for streaming, as per gemini-cli implementation
-          apiUrl += '&alt=sse';
+          apiUrl += '?alt=sse';
         }
         
         // CRITICAL: Remove any 'stream' field that might have leaked into the request
@@ -255,6 +254,7 @@ export class GeminiTranslator extends BaseTranslator {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}`,
             'User-Agent': 'GeminiCLI/1.0.0 (linux; x64) node.js'
           },
           body: JSON.stringify(request),
