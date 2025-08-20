@@ -1,14 +1,45 @@
 import { ToolCallValidator } from '../tool-call-validator.js';
 import { BaseTranslator } from './base-translator.js';
+import { 
+  shouldChunkRequest,
+  createChunksFromMessages,
+  aggregateChunkResponses,
+  validateChunkingConfig,
+  DEFAULT_CHUNKING_CONFIG
+} from '../utils/chunking-utils.js';
 
 /**
  * GeminiTranslator - Gemini-specific request translator
  * Translates between OpenAI-compatible format and Google Gemini API format
  */
 export class GeminiTranslator extends BaseTranslator {
-  constructor(logger, apiBaseUrl = null, requestTimeout = 30000) {
+  constructor(logger, apiBaseUrl = null, requestTimeout = 30000, chunkingConfig = null) {
     super(logger, apiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta', requestTimeout);
     this.toolCallValidator = new ToolCallValidator(logger);
+    
+    // Initialize chunking configuration
+    this.chunkingConfig = chunkingConfig || { ...DEFAULT_CHUNKING_CONFIG };
+    
+    // Validate chunking configuration
+    const validation = validateChunkingConfig(this.chunkingConfig);
+    if (!validation.valid) {
+      this.logger.warn('Invalid chunking configuration, using defaults', {
+        errors: validation.errors,
+        warnings: validation.warnings
+      });
+      this.chunkingConfig = { ...DEFAULT_CHUNKING_CONFIG };
+    } else if (validation.warnings.length > 0) {
+      this.logger.warn('Chunking configuration warnings', {
+        warnings: validation.warnings
+      });
+    }
+    
+    this.logger.debug('Initialized Gemini translator with chunking configuration', {
+      chunkingEnabled: this.chunkingConfig.enabled,
+      maxSizeBytes: this.chunkingConfig.maxSizeBytes,
+      maxLines: this.chunkingConfig.maxLines,
+      strategy: this.chunkingConfig.strategy
+    });
   }
   
   translateOpenAIToProvider(openAIRequest) {
@@ -120,100 +151,304 @@ export class GeminiTranslator extends BaseTranslator {
   }
   
   async forwardToProviderAPI(providerRequest, accessToken) {
-    try {
-      const { model, request, stream } = providerRequest;
-      // Use streaming endpoint if streaming is enabled
-      const endpoint = stream ? 'streamGenerateContent' : 'generateContent';
-      
-      // For public Gemini API, use API key instead of OAuth token
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error('GEMINI_API_KEY environment variable is required for Gemini API access');
+    const { model, request, stream } = providerRequest;
+    
+    // Debug chunking decision
+    const analysis = this.analyzeRequestSize(request);
+    const toolCount = (request.tools && Array.isArray(request.tools)) ? request.tools.length : 0;
+    const hasManyTools = toolCount > 50;
+    const effectiveMaxLines = hasManyTools ? Math.floor(this.chunkingConfig.maxLines * 0.3) : this.chunkingConfig.maxLines;
+    const effectiveMaxTokens = hasManyTools ? Math.floor(this.chunkingConfig.maxTokens * 0.5) : this.chunkingConfig.maxTokens;
+    
+    this.logger.debug('Chunking analysis', {
+      model: model,
+      analysis: analysis,
+      toolCount: toolCount,
+      hasManyTools: hasManyTools,
+      chunkingEnabled: this.chunkingConfig.enabled,
+      limits: {
+        maxSizeBytes: this.chunkingConfig.maxSizeBytes,
+        maxLines: this.chunkingConfig.maxLines,
+        maxTokens: this.chunkingConfig.maxTokens,
+        effectiveMaxLines: effectiveMaxLines,
+        effectiveMaxTokens: effectiveMaxTokens
+      },
+      exceedsLimits: {
+        size: analysis.sizeBytes > this.chunkingConfig.maxSizeBytes,
+        lines: analysis.lineCount > effectiveMaxLines,
+        tokens: analysis.tokenEstimate > effectiveMaxTokens,
+        tools: hasManyTools
       }
-      
-      const apiUrl = `${this.apiBaseUrl}/models/${model}:${endpoint}?key=${apiKey}`;
-      
-      // CRITICAL: Remove any 'stream' field that might have leaked into the request
-      if ('stream' in request) {
-        this.logger.warn('Removing stream field from Gemini request - not supported by API');
-        delete request.stream;
-      }
-      
-      // Request prepared for Gemini API
-      
-      // Create AbortController for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.requestTimeout);
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'GeminiCLI/1.0.0 (linux; x64) node.js'
-        },
-        body: JSON.stringify(request),
-        signal: controller.signal
+    });
+    
+    // Check if chunking is needed and enabled
+    if (this.chunkingConfig.enabled && shouldChunkRequest(request, this.chunkingConfig)) {
+      this.logger.info('Large request detected, using chunking strategy', {
+        model: model,
+        strategy: this.chunkingConfig.strategy,
+        analysis: analysis,
+        limits: {
+          maxSizeBytes: this.chunkingConfig.maxSizeBytes,
+          maxLines: this.chunkingConfig.maxLines,
+          maxTokens: this.chunkingConfig.maxTokens
+        }
       });
       
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+      return await this.processChunkedRequest(model, request, stream, accessToken);
+    }
+    
+    // Process single request without chunking
+    return await this.processSingleRequest(model, request, stream, accessToken);
+  }
+  
+  async processSingleRequest(model, request, stream, accessToken) {
+    const maxRetries = 6; // Fibonacci sequence: 1,2,3,5,8,13 seconds
+    
+    // Generate Fibonacci sequence for delays: 1,2,3,5,8,13 seconds
+    const fibonacciDelays = [1000, 2000, 3000, 5000, 8000, 13000];
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Use standard endpoint for both streaming and non-streaming
+        // Streaming is handled via alt=sse parameter, not different endpoints
+        const endpoint = 'generateContent';
         
-        this.logger.error('Gemini API request failed', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorData
-        });
+        // For public Gemini API, use API key instead of OAuth token
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          throw new Error('GEMINI_API_KEY environment variable is required for Gemini API access');
+        }
         
-        const error = new Error(errorData.error?.message || `API request failed: ${response.status} ${response.statusText}`);
-        error.statusCode = response.status;
-        throw error;
-      }
-      
-      // Handle streaming vs non-streaming responses
-      if (stream) {
-        // For streaming responses, return the response directly
-        return response;
-      } else {
-        const responseData = await response.json();
+        // Construct URL with appropriate parameters
+        let apiUrl = `${this.apiBaseUrl}/models/${model}:${endpoint}?key=${apiKey}`;
+        if (stream) {
+          // Use alt=sse parameter for streaming, as per gemini-cli implementation
+          apiUrl += '&alt=sse';
+        }
         
-        this.logger.debug('Received successful response from Gemini API', {
-          id: responseData.id,
+        // CRITICAL: Remove any 'stream' field that might have leaked into the request
+        if ('stream' in request) {
+          this.logger.warn('Removing stream field from Gemini request - not supported by API');
+          delete request.stream;
+        }
+        
+        // Log request details for debugging (without sensitive data)
+        const requestSize = this.analyzeRequestSize(request);
+        this.logger.debug('Sending request to Gemini API', {
           model: model,
-          usage: responseData.usageMetadata
+          endpoint: endpoint,
+          stream: stream,
+          contentLength: requestSize.contentLength,
+          tokenEstimate: requestSize.tokenEstimate,
+          messageCount: requestSize.messageCount,
+          hasTools: !!request.tools,
+          attempt: attempt + 1
         });
         
-        return {
-          ...responseData,
-          model: model
-        };
+        
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.requestTimeout);
+        
+        const startTime = Date.now();
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'GeminiCLI/1.0.0 (linux; x64) node.js'
+          },
+          body: JSON.stringify(request),
+          signal: controller.signal
+        });
+        
+        const endTime = Date.now();
+        const responseTime = endTime - startTime;
+        
+        clearTimeout(timeoutId);
+        
+        this.logger.debug('Gemini API response received', {
+          status: response.status,
+          responseTime: `${responseTime}ms`,
+          attempt: attempt + 1
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          
+          this.logger.error('Gemini API request failed', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData,
+            responseTime: `${responseTime}ms`,
+            attempt: attempt + 1,
+            maxRetries: maxRetries
+          });
+          
+          const error = new Error(errorData.error?.message || `API request failed: ${response.status} ${response.statusText}`);
+          error.statusCode = response.status;
+          throw error;
+        }
+        
+        // Handle streaming vs non-streaming responses
+        if (stream) {
+          // For streaming responses, return the response directly
+          this.logger.debug('Streaming response initiated successfully', {
+            model: model,
+            responseTime: `${responseTime}ms`,
+            attempt: attempt + 1
+          });
+          return response;
+        } else {
+          const responseData = await response.json();
+          
+          this.logger.debug('Received successful response from Gemini API', {
+            id: responseData.id,
+            model: model,
+            usage: responseData.usageMetadata,
+            responseTime: `${responseTime}ms`,
+            attempt: attempt + 1
+          });
+          
+          return {
+            ...responseData,
+            model: model
+          };
+        }
+        
+      } catch (error) {
+        const isRetryable = (error.name === 'TypeError' && error.message.includes('fetch')) ||
+                           (error.name === 'AbortError' || error.message.includes('timeout') || error.message.includes('aborted')) ||
+                           (error.statusCode >= 500 && error.statusCode !== 503); // 503 is handled specially
+        
+        // Special handling for timeout/abort errors that might be due to large requests
+        const isTimeoutError = (error.name === 'AbortError' || 
+                               error.message.includes('timeout') || 
+                               error.message.includes('aborted') ||
+                               (error.message.includes('operation was aborted')));
+        
+        this.logger.error('Error forwarding request to Gemini API', {
+          error: error.message,
+          errorName: error.name,
+          statusCode: error.statusCode,
+          attempt: attempt + 1,
+          maxRetries: maxRetries,
+          isRetryable: isRetryable,
+          isTimeoutError: isTimeoutError
+        });
+        
+        // If this is the last attempt or the error is not retryable, throw it
+        if (attempt === maxRetries || !isRetryable) {
+          // Handle specific error cases
+          if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            const networkError = new Error('Network error: Unable to connect to Gemini API. Please check your internet connection.');
+            networkError.statusCode = 503;
+            throw networkError;
+          }
+          
+          // Handle timeout errors with more specific messaging
+          if (isTimeoutError) {
+            const timeoutError = new Error('Request timeout: Gemini API did not respond in time. This is likely due to a large request that exceeds processing limits. The gemini-cli tool handles large files by chunking them into smaller pieces. Please reduce the size of your request or split it into smaller chunks.');
+            timeoutError.statusCode = 504;
+            throw timeoutError;
+          }
+          
+          // Handle timeout errors
+          if (error.name === 'AbortError' || error.message.includes('timeout')) {
+            const timeoutError = new Error('Request timeout: Gemini API did not respond in time.');
+            timeoutError.statusCode = 504;
+            throw timeoutError;
+          }
+          
+          // Re-throw with status code preserved
+          if (!error.statusCode) {
+            error.statusCode = 500;
+          }
+          throw error;
+        }
+        
+        // Calculate Fibonacci backoff delay with jitter to avoid thundering herd
+        const delay = fibonacciDelays[attempt] + Math.random() * 1000;
+        this.logger.info(`Retrying Gemini API request in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
+    }
+  }
+  
+  async processChunkedRequest(model, request, stream, accessToken) {
+    try {
+      // Create chunks from the request messages
+      const chunks = createChunksFromMessages(request.contents, this.chunkingConfig);
+      
+      this.logger.info('Processing chunked request', {
+        model: model,
+        totalChunks: chunks.length,
+        strategy: this.chunkingConfig.strategy,
+        batchSize: this.chunkingConfig.batchSize
+      });
+      
+      const chunkResponses = [];
+      
+      // Process chunks sequentially to maintain context (batchSize = 1 for now)
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        
+        this.logger.debug('Processing chunk', {
+          chunkIndex: i + 1,
+          totalChunks: chunks.length,
+          chunkId: chunk.id,
+          chunkSize: chunk.metadata.sizeBytes,
+          chunkLines: chunk.metadata.lineCount
+        });
+        
+        // Create a new request for this chunk
+        const chunkRequest = {
+          ...request,
+          contents: chunk.content
+        };
+        
+        try {
+          // Process single chunk without recursion
+          const chunkResponse = await this.processSingleRequest(model, chunkRequest, stream, accessToken);
+          chunkResponses.push(chunkResponse);
+          
+          this.logger.debug('Chunk processed successfully', {
+            chunkIndex: i + 1,
+            chunkId: chunk.id,
+            hasResponse: !!chunkResponse
+          });
+          
+        } catch (error) {
+          this.logger.error('Failed to process chunk', {
+            chunkIndex: i + 1,
+            chunkId: chunk.id,
+            error: error.message
+          });
+          
+          // For now, we'll continue with other chunks
+          // In future, we might want to implement different error handling strategies
+          throw new Error(`Chunked request failed at chunk ${i + 1}/${chunks.length}: ${error.message}`);
+        }
+      }
+      
+      // Aggregate responses from all chunks
+      const aggregatedResponse = aggregateChunkResponses(chunkResponses, model);
+      
+      this.logger.info('Chunked request completed successfully', {
+        model: model,
+        totalChunks: chunks.length,
+        successfulChunks: chunkResponses.length,
+        aggregatedResponseId: aggregatedResponse.id
+      });
+      
+      return aggregatedResponse;
       
     } catch (error) {
-      this.logger.error('Error forwarding request to Gemini API', {
-        error: error.message,
-        statusCode: error.statusCode
+      this.logger.error('Chunked request processing failed', {
+        model: model,
+        error: error.message
       });
-      
-      // Handle specific error cases
-      if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        const networkError = new Error('Network error: Unable to connect to Gemini API. Please check your internet connection.');
-        networkError.statusCode = 503;
-        throw networkError;
-      }
-      
-      // Handle timeout errors
-      if (error.name === 'AbortError' || error.message.includes('timeout')) {
-        const timeoutError = new Error('Request timeout: Gemini API did not respond in time.');
-        timeoutError.statusCode = 504;
-        throw timeoutError;
-      }
-      
-      // Re-throw with status code preserved
-      if (!error.statusCode) {
-        error.statusCode = 500;
-      }
       throw error;
     }
   }
@@ -254,6 +489,17 @@ export class GeminiTranslator extends BaseTranslator {
       return chunk;
       
     } catch (error) {
+      // More specific handling for JSON parsing errors
+      if (error instanceof SyntaxError && error.message.includes('JSON')) {
+        this.logger.warn('Failed to parse streaming chunk JSON, passing through unchanged', {
+          error: error.message,
+          chunk: chunk.substring(0, 200) + (chunk.length > 200 ? '...' : '')
+        });
+        // For JSON parsing errors, we might want to skip the chunk rather than pass it through
+        // This prevents corrupted data from being sent to the client
+        return ''; // Return empty string to skip the chunk
+      }
+      
       this.logger.warn('Failed to process streaming chunk, passing through unchanged', {
         error: error.message,
         chunk: chunk.substring(0, 200)
@@ -308,6 +554,16 @@ export class GeminiTranslator extends BaseTranslator {
         errors: validationResult.errors,
         warnings: validationResult.warnings
       });
+    }
+    
+    // Check for extremely large message sets that would cause timeouts
+    // This matches the gemini-cli approach of rejecting overly large inputs
+    if (messages && messages.length > 2000) { // 2000 messages ~ similar to 2000 lines
+      this.logger.error('Too many messages in request - would cause timeout like gemini-cli', {
+        messageCount: messages.length,
+        maxAllowed: 2000
+      });
+      throw new Error(`Request too large: ${messages.length} messages exceeds the limit of 2000 messages. The gemini-cli tool handles large inputs by chunking them. Please reduce the number of messages or split your request into smaller chunks.`);
     }
     
     // Transform OpenAI messages to Gemini format
@@ -661,6 +917,37 @@ export class GeminiTranslator extends BaseTranslator {
         }
       });
     }
+  }
+  
+  // Analyze request size to help identify potential timeout causes
+  analyzeRequestSize(request) {
+    if (!request || !request.contents) {
+      return { contentLength: 0, tokenEstimate: 0 };
+    }
+    
+    let totalChars = 0;
+    let messageCount = 0;
+    
+    // Count characters in all message contents
+    for (const content of request.contents) {
+      if (content.parts && Array.isArray(content.parts)) {
+        for (const part of content.parts) {
+          if (part.text) {
+            totalChars += part.text.length;
+            messageCount++;
+          }
+        }
+      }
+    }
+    
+    // Rough estimate: 1 token ≈ 4 characters
+    const tokenEstimate = Math.floor(totalChars / 4);
+    
+    return {
+      contentLength: totalChars,
+      tokenEstimate: tokenEstimate,
+      messageCount: messageCount
+    };
   }
   
   // Validation helpers

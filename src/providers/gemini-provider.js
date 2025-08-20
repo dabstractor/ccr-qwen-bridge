@@ -21,7 +21,8 @@ export class GeminiProvider extends BaseProvider {
     this.translator = new GeminiTranslator(
       logger,
       config.apiBaseUrl,
-      config.requestTimeout
+      config.requestTimeout,
+      config.chunking
     );
   }
   

@@ -116,7 +116,17 @@ export class ConfigManager {
       clientSecret: geminiCredentials.clientSecret || this.getConfigValue('PROVIDER_GEMINI_CLIENT_SECRET', null),
       scope: geminiCredentials.scope,
       apiBaseUrl: this.getConfigValue('PROVIDER_GEMINI_API_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
-      requestTimeout: parseInt(this.getConfigValue('PROVIDER_GEMINI_REQUEST_TIMEOUT', '30000'))
+      requestTimeout: parseInt(this.getConfigValue('PROVIDER_GEMINI_REQUEST_TIMEOUT', '60000')),
+      // Chunking configuration options
+      chunking: {
+        enabled: this.getConfigValue('PROVIDER_GEMINI_CHUNKING_ENABLED', 'true').toLowerCase() === 'true',
+        maxSizeBytes: parseInt(this.getConfigValue('PROVIDER_GEMINI_CHUNKING_MAX_SIZE_BYTES', '15728640')), // 15MB
+        maxLines: parseInt(this.getConfigValue('PROVIDER_GEMINI_CHUNKING_MAX_LINES', '1500')),
+        maxTokens: parseInt(this.getConfigValue('PROVIDER_GEMINI_CHUNKING_MAX_TOKENS', '30000')),
+        batchSize: parseInt(this.getConfigValue('PROVIDER_GEMINI_CHUNKING_BATCH_SIZE', '1')),
+        overlapLines: parseInt(this.getConfigValue('PROVIDER_GEMINI_CHUNKING_OVERLAP_LINES', '50')),
+        strategy: this.getConfigValue('PROVIDER_GEMINI_CHUNKING_STRATEGY', 'line-based')
+      }
     };
     
     this.logger.info('Built provider configurations with discovered credentials', {

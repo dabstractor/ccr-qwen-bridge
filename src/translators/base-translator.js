@@ -4,7 +4,7 @@
  */
 
 export class BaseTranslator {
-  constructor(logger, apiBaseUrl = null, requestTimeout = 30000) {
+  constructor(logger, apiBaseUrl = null, requestTimeout = 60000) {
     this.logger = logger;
     this.apiBaseUrl = apiBaseUrl;
     this.requestTimeout = requestTimeout;

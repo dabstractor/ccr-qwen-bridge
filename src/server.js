@@ -235,9 +235,10 @@ class ClaudeBridge {
           res.end();
         }
       } else if (providerName === 'gemini') {
-        // Gemini uses direct response streaming
+        // Gemini uses direct response streaming with proper buffering
         const reader = providerResponse.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
         
         try {
           while (true) {
@@ -245,16 +246,27 @@ class ClaudeBridge {
             if (done) break;
             
             const chunk = decoder.decode(value, { stream: true });
-            // Process each SSE chunk and translate to OpenAI format
-            const lines = chunk.split('\n');
+            buffer += chunk;
+            
+            // Process complete lines from buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
             for (const line of lines) {
               if (line.trim()) {
+                // Process each SSE chunk and translate to OpenAI format
                 const processedLine = provider.translator.processStreamingChunk(line);
                 res.write(processedLine + '\n');
               } else {
                 res.write(line + '\n');
               }
             }
+          }
+          
+          // Process any remaining buffer content
+          if (buffer.trim()) {
+            const processedLine = provider.translator.processStreamingChunk(buffer);
+            res.write(processedLine);
           }
           
           res.end();
