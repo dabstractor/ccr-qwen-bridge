@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { BaseAuthManager } from './base-auth-manager.js';
+import { generatePKCEPair } from '../utils/pkce-utils.js';
 
 /**
  * QwenAuthManager - Qwen-specific OAuth manager
@@ -42,10 +43,16 @@ export class QwenAuthManager extends BaseAuthManager {
       throw new Error('QWEN_CLIENT_ID is required but not provided. Please run the setup script or set PROVIDER_QWEN_CLIENT_ID environment variable.');
     }
     this.CLIENT_ID = clientId;
+    
+    // Initialize PKCE support
+    this.pkcePair = null;
   }
   
   async initialize() {
     try {
+      // Generate PKCE pair for OAuth flow
+      this.pkcePair = generatePKCEPair();
+      
       // Load credentials from ~/.qwen/oauth_creds.json on startup
       await this.loadCredentials();
       this.logger.info('Qwen Auth Manager initialized successfully', {
@@ -110,8 +117,10 @@ export class QwenAuthManager extends BaseAuthManager {
       return true;
     }
     
-    // Check if current access_token is expired (Date.now() > expiry_date)
-    return Date.now() > this.credentials.expiry_date;
+    // Check if current access_token is expired with a 5-minute buffer
+    // This ensures proactive token refresh before actual expiration
+    const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+    return Date.now() > (this.credentials.expiry_date - bufferTime);
   }
   
   async refreshToken() {
@@ -122,31 +131,52 @@ export class QwenAuthManager extends BaseAuthManager {
       });
       
       // Refresh Logic - POST request to token endpoint
+      // Standard OAuth 2.0 refresh token flow with form-encoded data
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('client_id', this.CLIENT_ID);
+      params.append('refresh_token', this.credentials.refresh_token);
+      
       const response = await fetch(this.TOKEN_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': 'application/json',
           'User-Agent': 'qwen-code/1.0.0'
         },
-        body: JSON.stringify({
-          grant_type: 'refresh_token',
-          client_id: this.CLIENT_ID,
-          refresh_token: this.credentials.refresh_token
-        })
+        body: params.toString()
       });
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'unknown_error' }));
         
+        this.logger.error('Qwen token refresh failed', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error,
+          description: errorData.error_description
+        });
+        
         // Handle unrecoverable auth errors
-        if (errorData.error === 'invalid_grant' || errorData.error === 'access_denied' || errorData.error === 'invalid_client') {
+        if (errorData.error === 'invalid_grant' || errorData.error === 'access_denied') {
           this.logger.error('Qwen authentication credentials invalid', {
             error: errorData.error,
             description: errorData.error_description
           });
           
           throw new Error(`FATAL: ${errorData.error}. Please re-authenticate with the official qwen-code CLI by running: qwen auth`);
+        }
+        
+        // For invalid_client, log the error but don't treat it as fatal
+        // This might be a temporary issue that can be resolved
+        if (errorData.error === 'invalid_client') {
+          this.logger.warn('Qwen client credentials invalid - this might be temporary', {
+            error: errorData.error,
+            description: errorData.error_description
+          });
+          
+          // Don't throw a fatal error - let the system continue and retry
+          throw new Error(`Unable to refresh Qwen access token: ${errorData.error}`);
         }
         
         throw new Error(`Qwen token refresh failed: ${errorData.error || 'HTTP ' + response.status}`);

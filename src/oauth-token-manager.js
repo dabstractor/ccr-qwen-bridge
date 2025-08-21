@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { generatePKCEPair } from './utils/pkce-utils.js';
 
 export class OAuthTokenManager {
   constructor(credentialsPath, logger) {
@@ -11,6 +12,9 @@ export class OAuthTokenManager {
     // OAuth 2.0 constants from PRP
     this.TOKEN_URL = 'https://chat.qwen.ai/api/v1/oauth2/token';
     this.CLIENT_ID = 'f0304373b74a44d2b584a3fb70ca9e56';
+    
+    // Initialize PKCE support
+    this.pkcePair = generatePKCEPair();
   }
 
   expandHomePath(filePath) {
@@ -86,31 +90,42 @@ export class OAuthTokenManager {
       return true;
     }
     
-    // F-2.4: Check if current access_token is expired (Date.now() > expiry_date)
-    return Date.now() > this.credentials.expiry_date;
+    // Check if current access_token is expired with a 5-minute buffer
+    // This ensures proactive token refresh before actual expiration
+    const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+    return Date.now() > (this.credentials.expiry_date - bufferTime);
   }
 
   async refreshToken() {
     try {
       this.logger.info('Attempting to refresh access token');
       
-      // F-2.5: Refresh Logic - POST request to token endpoint
+      // Refresh Logic - POST request to token endpoint
+      // Standard OAuth 2.0 refresh token flow with form-encoded data
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('client_id', this.CLIENT_ID);
+      params.append('refresh_token', this.credentials.refresh_token);
+      
       const response = await fetch(this.TOKEN_URL, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
           'Accept': 'application/json',
           'User-Agent': 'qwen-code/1.0.0'
         },
-        body: JSON.stringify({
-          grant_type: 'refresh_token',
-          client_id: this.CLIENT_ID,
-          refresh_token: this.credentials.refresh_token
-        })
+        body: params.toString()
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'unknown_error' }));
+        
+        this.logger.error('Token refresh failed', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error,
+          description: errorData.error_description
+        });
         
         // F-4.3: Handle unrecoverable auth errors
         if (errorData.error === 'invalid_grant' || errorData.error === 'access_denied') {
@@ -119,6 +134,18 @@ export class OAuthTokenManager {
             description: errorData.error_description
           });
           throw new Error(`FATAL: ${errorData.error}. Please re-authenticate with the official qwen-code CLI by running: qwen auth`);
+        }
+        
+        // For invalid_client, log the error but don't treat it as fatal
+        // This might be a temporary issue that can be resolved
+        if (errorData.error === 'invalid_client') {
+          this.logger.warn('Client credentials invalid - this might be temporary', {
+            error: errorData.error,
+            description: errorData.error_description
+          });
+          
+          // Don't throw a fatal error - let the system continue and retry
+          throw new Error(`Unable to refresh access token: ${errorData.error}`);
         }
         
         throw new Error(`Token refresh failed: ${errorData.error || 'HTTP ' + response.status}`);
