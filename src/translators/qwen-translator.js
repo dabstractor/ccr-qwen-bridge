@@ -1,5 +1,6 @@
 import { ToolCallValidator } from '../tool-call-validator.js';
 import { BaseTranslator } from './base-translator.js';
+import { JSONParser } from '../utils/json-parser.js';
 
 /**
  * QwenTranslator - Qwen-specific request translator
@@ -112,17 +113,34 @@ export class QwenTranslator extends BaseTranslator {
             // Validate arguments are valid JSON if present
             let validatedArguments = toolCall.function.arguments || '{}';
             if (validatedArguments) {
-              try {
-                // Parse and re-stringify to ensure valid JSON
-                const parsedArgs = JSON.parse(validatedArguments);
-                validatedArguments = JSON.stringify(parsedArgs);
-              } catch (error) {
+              const parseResult = JSONParser.parseWithDetails(validatedArguments, {
+                toolCallId: toolCall.id,
+                functionName: toolCall.function.name,
+                translator: 'qwen'
+              });
+              
+              if (parseResult.success) {
+                // Re-stringify to ensure valid JSON format
+                validatedArguments = JSON.stringify(parseResult.data);
+                
+                if (parseResult.fixed) {
+                  this.logger.info('Fixed malformed JSON in tool call arguments', {
+                    toolCallId: toolCall.id,
+                    functionName: toolCall.function.name,
+                    originalError: parseResult.error.message,
+                    wasFixed: true
+                  });
+                }
+              } else {
                 this.logger.warn('Invalid JSON in tool call arguments, using empty object', {
                   toolCallId: toolCall.id,
                   functionName: toolCall.function.name,
-                  error: error.message,
-                  rawArguments: validatedArguments.substring(0, 200) + '...',
-                  argumentsLength: validatedArguments.length
+                  parseError: parseResult.error.message,
+                  fixAttemptError: parseResult.error.fixAttemptMessage,
+                  errorPosition: parseResult.error.position,
+                  rawArguments: validatedArguments.substring(0, 200) + (validatedArguments.length > 200 ? '...' : ''),
+                  argumentsLength: validatedArguments.length,
+                  fallbackUsed: true
                 });
                 validatedArguments = '{}';
               }

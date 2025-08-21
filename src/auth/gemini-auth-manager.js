@@ -22,6 +22,7 @@ export class GeminiAuthManager extends BaseAuthManager {
     this.CLIENT_SECRET = clientSecret || process.env.PROVIDER_GEMINI_CLIENT_SECRET;
     this.SCOPE = [
       'https://www.googleapis.com/auth/cloud-platform',
+      'https://www.googleapis.com/auth/generative-language.retriever',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile'
     ];

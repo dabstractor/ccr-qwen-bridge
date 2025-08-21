@@ -14,6 +14,47 @@ export const ToolCallState = {
 };
 
 /**
+ * Enhanced error class that behaves like a string for backward compatibility
+ * but stores detailed error information for debugging
+ */
+class ValidationError extends String {
+  constructor(message, context = {}) {
+    super(message);
+    this.message = message;
+    this.timestamp = new Date().toISOString();
+    Object.assign(this, context);
+  }
+
+  toString() {
+    return this.message;
+  }
+
+  valueOf() {
+    return this.message;
+  }
+}
+
+/**
+ * Enhanced warning class that behaves like a string for backward compatibility
+ */
+class ValidationWarning extends String {
+  constructor(message, context = {}) {
+    super(message);
+    this.message = message;
+    this.timestamp = new Date().toISOString();
+    Object.assign(this, context);
+  }
+
+  toString() {
+    return this.message;
+  }
+
+  valueOf() {
+    return this.message;
+  }
+}
+
+/**
  * Validation result structure for tool call sequence validation
  */
 export class ValidationResult {
@@ -23,15 +64,52 @@ export class ValidationResult {
     this.warnings = warnings;
     this.toolCallCount = 0;
     this.respondedToolCallCount = 0;
+    // NEW: Add detailed context for debugging
+    this.context = {
+      schemaValidation: [],
+      parameterProcessing: [],
+      jsonParsing: []
+    };
   }
 
-  addError(message) {
-    this.errors.push(message);
+  addError(message, context = {}) {
+    const error = new ValidationError(message, context);
+    this.errors.push(error);
     this.valid = false;
   }
 
-  addWarning(message) {
-    this.warnings.push(message);
+  addWarning(message, context = {}) {
+    const warning = new ValidationWarning(message, context);
+    this.warnings.push(warning);
+  }
+
+  addSchemaValidationContext(toolName, parameterName, issue, details = {}) {
+    this.context.schemaValidation.push({
+      toolName,
+      parameterName,
+      issue,
+      timestamp: new Date().toISOString(),
+      ...details
+    });
+  }
+
+  addParameterProcessingContext(toolName, step, details = {}) {
+    this.context.parameterProcessing.push({
+      toolName,
+      step,
+      timestamp: new Date().toISOString(),
+      ...details
+    });
+  }
+
+  addJsonParsingContext(toolName, success, error = null, details = {}) {
+    this.context.jsonParsing.push({
+      toolName,
+      success,
+      error,
+      timestamp: new Date().toISOString(),
+      ...details
+    });
   }
 
   hasIssues() {
@@ -40,6 +118,21 @@ export class ValidationResult {
 
   updateValidation() {
     this.valid = this.errors.length === 0;
+  }
+
+  getDetailedSummary() {
+    return {
+      valid: this.valid,
+      errorCount: this.errors.length,
+      warningCount: this.warnings.length,
+      toolCallCount: this.toolCallCount,
+      respondedToolCallCount: this.respondedToolCallCount,
+      contextSummary: {
+        schemaValidationIssues: this.context.schemaValidation.length,
+        parameterProcessingSteps: this.context.parameterProcessing.length,
+        jsonParsingAttempts: this.context.jsonParsing.length
+      }
+    };
   }
 }
 
@@ -70,12 +163,22 @@ export class ToolCallValidator {
       if (message.role === 'assistant' && message.tool_calls) {
         for (const toolCall of message.tool_calls) {
           if (!toolCall.id) {
-            result.addError(`Tool call missing required ID: ${JSON.stringify(toolCall)}`);
+            result.addError('Tool call missing required ID', {
+              toolCall: JSON.stringify(toolCall),
+              validationStep: 'id_validation',
+              messageIndex: messages.indexOf(message)
+            });
             continue;
           }
           
           if (!toolCall.function || !toolCall.function.name) {
-            result.addError(`Tool call ${toolCall.id} missing function name`);
+            result.addError('Tool call missing function name', {
+              toolCallId: toolCall.id,
+              hasFunction: !!toolCall.function,
+              functionName: toolCall.function?.name,
+              validationStep: 'function_name_validation',
+              messageIndex: messages.indexOf(message)
+            });
             continue;
           }
 
@@ -83,8 +186,24 @@ export class ToolCallValidator {
           if (toolCall.function.arguments) {
             try {
               JSON.parse(toolCall.function.arguments);
+              result.addJsonParsingContext(toolCall.function.name, true, null, {
+                toolCallId: toolCall.id,
+                argumentsLength: toolCall.function.arguments.length
+              });
             } catch (error) {
-              result.addError(`Tool call ${toolCall.id} has invalid JSON arguments: ${error.message}`);
+              result.addError('Tool call has invalid JSON arguments', {
+                toolCallId: toolCall.id,
+                functionName: toolCall.function.name,
+                jsonError: error.message,
+                argumentsPreview: toolCall.function.arguments.substring(0, 100) + (toolCall.function.arguments.length > 100 ? '...' : ''),
+                argumentsLength: toolCall.function.arguments.length,
+                validationStep: 'json_arguments_validation',
+                messageIndex: messages.indexOf(message)
+              });
+              result.addJsonParsingContext(toolCall.function.name, false, error.message, {
+                toolCallId: toolCall.id,
+                argumentsLength: toolCall.function.arguments.length
+              });
               continue;
             }
           }

@@ -1,5 +1,6 @@
 import { ToolCallValidator } from '../tool-call-validator.js';
 import { BaseTranslator } from './base-translator.js';
+import { JSONParser } from '../utils/json-parser.js';
 import { 
   shouldChunkRequest,
   createChunksFromMessages,
@@ -600,7 +601,15 @@ export class GeminiTranslator extends BaseTranslator {
           geminiContent.parts.push({
             functionCall: {
               name: toolCall.function.name,
-              args: toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {}
+              args: toolCall.function.arguments ? JSONParser.parseToolArguments(
+                toolCall.function.arguments,
+                {
+                  toolCallId: toolCall.id,
+                  functionName: toolCall.function.name,
+                  translator: 'gemini'
+                },
+                this.logger
+              ) : {}
             }
           });
         }
@@ -740,7 +749,7 @@ export class GeminiTranslator extends BaseTranslator {
   }
   
   // Recursively remove unsupported JSON Schema fields
-  removeUnsupportedSchemaFields(obj) {
+  removeUnsupportedSchemaFields(obj, isTopLevel = true) {
     if (!obj || typeof obj !== 'object') {
       return;
     }
@@ -779,10 +788,12 @@ export class GeminiTranslator extends BaseTranslator {
     }
     
     // Handle required array validation for properties
-    if (obj.properties && obj.required && Array.isArray(obj.required)) {
+    // CRITICAL: Only validate top-level required arrays against top-level properties
+    if (isTopLevel && obj.properties && obj.required && Array.isArray(obj.required)) {
       this.logger.debug('Processing required array for tool schema', {
         requiredBefore: obj.required,
-        availableProperties: Object.keys(obj.properties)
+        availableProperties: Object.keys(obj.properties),
+        isTopLevel: isTopLevel
       });
       
       // Filter required array to only include properties that actually exist
@@ -793,7 +804,8 @@ export class GeminiTranslator extends BaseTranslator {
           this.logger.warn('Removing invalid required property from tool schema', {
             property: propName,
             reason: 'Property not defined in properties object',
-            availableProperties: Object.keys(obj.properties || {})
+            availableProperties: Object.keys(obj.properties || {}),
+            isTopLevel: isTopLevel
           });
         }
         return exists;
@@ -802,7 +814,8 @@ export class GeminiTranslator extends BaseTranslator {
       this.logger.debug('Filtered required array', {
         originalRequired,
         filteredRequired: obj.required,
-        removedCount: originalRequired.length - obj.required.length
+        removedCount: originalRequired.length - obj.required.length,
+        isTopLevel: isTopLevel
       });
       
       // Remove required array if it's empty
@@ -812,12 +825,12 @@ export class GeminiTranslator extends BaseTranslator {
       }
     }
     
-    // Recursively clean nested objects and arrays
+    // Recursively clean nested objects and arrays without affecting parent validation
     for (const [key, value] of Object.entries(obj)) {
       if (Array.isArray(value)) {
-        value.forEach(item => this.removeUnsupportedSchemaFields(item));
+        value.forEach(item => this.removeUnsupportedSchemaFields(item, false));
       } else if (value && typeof value === 'object') {
-        this.removeUnsupportedSchemaFields(value);
+        this.removeUnsupportedSchemaFields(value, false);
       }
     }
   }
