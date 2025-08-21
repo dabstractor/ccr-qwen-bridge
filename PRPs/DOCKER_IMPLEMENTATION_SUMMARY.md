@@ -48,7 +48,7 @@ docker-compose up -d
 docker build -t ccr-qwen-bridge .
 docker run -d \
   --name qwen-bridge \
-  -p 8732:8732 \
+  -p 31337:31337 \
   -v qwen-credentials:/home/node/.qwen \
   -e HOST=0.0.0.0 \
   --restart unless-stopped \

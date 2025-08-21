@@ -186,12 +186,12 @@ services:
   qwen-bridge:
     build: .
     ports:
-      - "8732:8732"
+      - "31337:31337"
     volumes:
       - qwen-credentials:/home/node/.qwen
     environment:
       - HOST=0.0.0.0
-      - PORT=8732
+      - PORT=31337
     restart: unless-stopped
 ```
 
@@ -268,7 +268,7 @@ COPY --chown=nodejs:nodejs . .
 USER nodejs
 
 # Expose port (matches default PORT in config-manager.js)
-EXPOSE 8732
+EXPOSE 31337
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -288,7 +288,7 @@ services:
     container_name: ccr-qwen-bridge
     ports:
       # Host port mapping - external access
-      - "${HOST_PORT:-8732}:8732"
+      - "${HOST_PORT:-31337}:31337"
     volumes:
       # CRITICAL: Volume mount for credential persistence
       # Maps host ~/.qwen to container /home/node/.qwen
@@ -296,7 +296,7 @@ services:
     environment:
       # CRITICAL: Environment variables for configuration
       - HOST=0.0.0.0
-      - PORT=8732
+      - PORT=31337
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30000}
@@ -305,7 +305,7 @@ services:
     restart: unless-stopped
     # CRITICAL: Health check matching server health endpoint
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8732/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:31337/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -372,7 +372,7 @@ CONFIGURATION:
   - pattern: PORT matches EXPOSE in Dockerfile
 
 NETWORKING:
-  - port: Container port 8732 mapped to configurable host port
+  - port: Container port 31337 mapped to configurable host port
   - binding: Host binding allows external access to bridge
   - pattern: Health check endpoint at /health for container monitoring
 
@@ -441,7 +441,7 @@ QWEN_CREDENTIALS_PATH="$HOME/.qwen-test" docker-compose up -d
 sleep 5
 
 # 5. Test health endpoint
-curl -f http://localhost:8732/health
+curl -f http://localhost:31337/health
 # Expected: 200 OK with JSON health response
 
 # 6. Test credential file access
@@ -474,7 +474,7 @@ docker-compose up -d
 docker-compose logs --tail=50
 
 # 4. Test actual Qwen API connectivity (requires valid credentials)
-curl -X POST http://localhost:8732/health \
+curl -X POST http://localhost:31337/health \
   -H "Content-Type: application/json" \
   | jq '.'
 # Expected: Healthy status response

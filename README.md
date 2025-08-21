@@ -1,127 +1,92 @@
 # Claude Bridge for Claude Code Router
 
-Use free daily API quotas from multiple AI providers with your Claude Code Router.
+Get free daily API usage from Qwen and Gemini with your Claude Code Router.
 
-## Quick Start (5 Minutes)
+## What is this?
 
-### 1. Install CLI Tools & Authenticate
+Claude Bridge lets you use your free Qwen and Gemini API quotas with Claude Code Router. Point your router to this bridge and get access to free AI models instead of paying for Claude API usage.
 
-**For Qwen (required):**
+## What You Get
+
+- **Free Qwen Access**: Use qwen3-coder-plus and qwen3-coder-flash models at no cost
+- **Free Gemini Access**: Use gemini-pro model with your Google account
+- **Single Endpoint**: Configure once and use both providers seamlessly
+
+## Prerequisites
+
+1. Node.js 18+ installed
+2. npm (comes with Node.js)
+3. Docker and Docker Compose (optional, for containerized deployment)
+
+## Authentication Setup
+
+**NOTE**: You must complete authentication with each provider before running the setup script. The setup process extracts client credentials from the CLI tools and stores them in your `.env` file.
+
+### Qwen Provider (Required)
+
+1. Install the Qwen CLI:
+   ```bash
+   npm install -g @qwen-code/qwen-code@latest
+   ```
+
+2. Authenticate with Qwen (complete OAuth flow in browser):
+   ```bash
+   qwen auth
+   ```
+
+### Gemini Provider (Optional)
+
+1. Install the Gemini CLI:
+   ```bash
+   npm install -g @google/gemini-cli
+   ```
+
+2. Authenticate with Google (complete OAuth flow in browser):
+   ```bash
+   gemini auth
+   ```
+
+## Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/dabstractor/ccr-qwen-bridge
+   cd ccr-qwen-bridge
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. **IMPORTANT**: Authenticate with providers first (see Authentication Setup above), then set up provider credentials:
+   ```bash
+   npm run setup
+   ```
+
+4. Start the service:
+   ```bash
+   npm start
+   ```
+
+   Or use Docker (recommended):
+   ```bash
+   docker-compose up -d
+   ```
+
+## Configuration
+
+Copy the example configuration file and customize as needed:
+
 ```bash
-npm install -g @qwen-code/qwen-code@latest
-qwen auth
+cp .env.example .env
 ```
 
-**For Gemini (optional):**
-```bash
-npm install -g @google/gemini-cli
-gemini auth
-```
+Edit the `.env` file to configure server settings, provider options, and logging preferences.
 
-### 2. Set Up Credentials
+## Health Check
 
-```bash
-git clone https://github.com/dabstractor/ccr-qwen-bridge
-cd ccr-qwen-bridge
-npm run setup
-```
-
-### 3. Start the Service
-
-**Option A: Run in terminal (stops when you close terminal)**
-```bash
-npm install
-npm start
-```
-
-**Option B: Run in background forever (recommended)**
-```bash
-docker-compose up -d
-```
-
-That's it! Your bridge is now running and ready to use with Claude Code Router.
-
-### 4. Configure Claude Code Router
-
-Add this to your `~/.claude-code-router/config.json`:
-
-**Under "Providers":**
-```json
-{
-  "name": "claude-bridge",
-  "api_base_url": "http://localhost:31337/v1/chat/completions",
-  "models": [
-    {
-      "name": "qwen/qwen3-coder-plus",
-      "transformer": {
-        "use": [
-          [
-            "maxtoken",
-            {
-              "max_tokens": 262144
-            }
-          ]
-        ]
-      }
-    },
-    {
-      "name": "qwen/qwen3-coder-flash",
-      "transformer": {
-        "use": [
-          [
-            "maxtoken",
-            {
-              "max_tokens": 262144
-            }
-          ]
-        ]
-      }
-    },
-    {
-      "name": "gemini/gemini-pro",
-      "transformer": {
-        "use": [
-          [
-            "maxtoken",
-            {
-              "max_tokens": 32768
-            }
-          ]
-        ]
-      }
-    }
-  ]
-}
-```
-
-**Under "Router":**
-```json
-"Router": {
-  "default": "claude-bridge,qwen/qwen3-coder-plus",
-  "background": "claude-bridge,qwen/qwen3-coder-flash",
-  "think": "claude-bridge,qwen/qwen3-coder-plus",
-  "longContext": "claude-bridge,gemini/gemini-pro"
-}
-```
-
-## Management Commands
-
-### Docker Management
-```bash
-# View logs
-docker-compose logs -f
-
-# Stop service
-docker-compose down
-
-# Restart service
-docker-compose restart
-
-# Update to latest version
-git pull && docker-compose up -d --build
-```
-
-### Health Check
+Verify the service is running:
 ```bash
 curl http://localhost:31337/health
 ```

@@ -438,7 +438,7 @@ SERVER_PID=$!
 sleep 3                                   # Allow server startup time
 
 # Tool calling integration validation with curl
-curl -X POST http://localhost:8732/v1/chat/completions \
+curl -X POST http://localhost:31337/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer test-token" \
   -d '{
@@ -476,11 +476,11 @@ kill $SERVER_PID
 node validation/ccr-integration-test.js   # Automated ccr integration test
 
 # Manual validation steps:
-# 1. Ensure ccr-qwen-bridge proxy is running on localhost:8732
+# 1. Ensure ccr-qwen-bridge proxy is running on localhost:31337
 npm start &
 
 # 2. Configure claude-code-router to use proxy (if not automated)
-export OPENAI_BASE_URL=http://localhost:8732/v1
+export OPENAI_BASE_URL=http://localhost:31337/v1
 export OPENAI_API_KEY=your-qwen-token
 
 # 3. Run actual ccr command that requires tool calling

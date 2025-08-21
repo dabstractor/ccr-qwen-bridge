@@ -182,7 +182,7 @@ class TestQwenCodeBridge {
     }
   }
 
-  start(port = 8732) {
+  start(port = 31337) {
     this.initialize();
     
     this.app.listen(port, 'localhost', () => {
